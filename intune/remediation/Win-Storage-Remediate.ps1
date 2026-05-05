@@ -1355,10 +1355,9 @@ function Invoke-DISM-Safe {
         Write-CustomMessage "Starting DISM component store cleanup (StartComponentCleanup)."
         $cleanup = Start-Process -FilePath 'dism.exe' -ArgumentList '/Online /Cleanup-Image /StartComponentCleanup' -NoNewWindow -Wait -PassThru -ErrorAction Stop
         if ($cleanup.ExitCode -eq 0) { Write-CustomMessage "DISM component store cleanup completed successfully."; return @{ Ran = $true; ExitCode = 0 } }
-        else { Write-CustomMessage "ERROR: DISM cleanup failed with exit code $($cleanup.ExitCode)."; return @{ Ran = $true; ExitCode = $cleanup.ExitCode } }
+        else { return @{ Ran = $true; ExitCode = $cleanup.ExitCode } }
     }
     catch {
-        Write-CustomMessage ("ERROR: DISM cleanup encountered an exception: {0}" -f $_.Exception.Message)
         return @{ Ran = $false; Error = $_ }
     }
 }
@@ -1375,16 +1374,16 @@ function Invoke-DISMCleanup {
         $dismResult = Invoke-DISM-Safe
         if ($dismResult.Ran -eq $false) {
             # Use a descriptive reason instead of a boolean. Avoid -or which returns a boolean in PowerShell.
-            $reasonMsg = if ($dismResult.Reason) { $dismResult.Reason } elseif ($dismResult.Error) { $dismResult.Error } else { 'Unknown' }
+            $reasonMsg = if ($dismResult.Reason) { $dismResult.Reason } elseif ($dismResult.Error) { $dismResult.Error.Exception.Message } else { 'Unknown' }
             Write-CustomMessage ("DISM step skipped or dry-run: {0}" -f $reasonMsg)
         }
         else {
             if ($dismResult.ExitCode -eq 0) { Write-CustomMessage "DISM component store cleanup completed successfully." }
-            else { Write-CustomMessage ("ERROR: DISM cleanup failed with exit code {0}." -f $dismResult.ExitCode) }
+            else { Write-CustomMessage ("DISM cleanup failed with exit code {0}." -f $dismResult.ExitCode) -Level ERROR }
         }
     }
     catch {
-        Write-CustomMessage (("ERROR: DISM cleanup encountered an exception: {0}" -f $($_.Exception.Message)))
+        Write-CustomMessage (("DISM cleanup encountered an exception: {0}" -f $($_.Exception.Message))) -Level ERROR
     }
 }
 
@@ -1537,12 +1536,15 @@ function Test-IsProtectedPath {
     )
     if (-not $PathToTest) { return $false }
     try {
-        $resolved = (Get-Item -LiteralPath $PathToTest -ErrorAction SilentlyContinue).FullName
+        $resolvedItem = Get-Item -LiteralPath $PathToTest -ErrorAction SilentlyContinue
+        if ($resolvedItem -and $resolvedItem.FullName) { $resolved = $resolvedItem.FullName }
+        else { $resolved = $PathToTest }
     }
     catch {
         # If it can't be resolved, fallback to the input
         $resolved = $PathToTest
     }
+    if (-not $resolved) { $resolved = $PathToTest }
 
     # Normalize for comparison
     try { $resolvedNorm = [IO.Path]::GetFullPath($resolved).TrimEnd('\') } catch { $resolvedNorm = $resolved }
@@ -1555,11 +1557,11 @@ function Test-IsProtectedPath {
     if ($archiveDirectory) { try { $archiveDirNorm = [IO.Path]::GetFullPath($archiveDirectory).TrimEnd('\') } catch { $archiveDirNorm = $null } }
     if ($archiveFile) { try { $archiveFileNorm = [IO.Path]::GetFullPath($archiveFile).TrimEnd('\') } catch { $archiveFileNorm = $null } }
 
-    if ($tempLogNorm -and ($resolvedNorm -eq $tempLogNorm)) { return $true }
-    if ($logFileNorm -and ($resolvedNorm -eq $logFileNorm)) { return $true }
-    if ($archiveFileNorm -and ($resolvedNorm -eq $archiveFileNorm)) { return $true }
-    if ($logDirNorm -and $resolvedNorm.StartsWith($logDirNorm, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
-    if ($archiveDirNorm -and $resolvedNorm.StartsWith($archiveDirNorm, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    if ($resolvedNorm -and $tempLogNorm -and ($resolvedNorm -eq $tempLogNorm)) { return $true }
+    if ($resolvedNorm -and $logFileNorm -and ($resolvedNorm -eq $logFileNorm)) { return $true }
+    if ($resolvedNorm -and $archiveFileNorm -and ($resolvedNorm -eq $archiveFileNorm)) { return $true }
+    if ($resolvedNorm -and $logDirNorm -and $resolvedNorm.StartsWith($logDirNorm, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    if ($resolvedNorm -and $archiveDirNorm -and $resolvedNorm.StartsWith($archiveDirNorm, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
 
     # If the item is a reparse point (junction/mount/symlink) we must skip it
     try {
@@ -1574,7 +1576,8 @@ function Test-IsProtectedPath {
     }
 
     # Also respect configured skip patterns
-    if (Test-IsSkipPath -PathToTest $resolved) { return $true }
+    $skipPathCandidate = if ($resolvedNorm) { $resolvedNorm } else { $PathToTest }
+    if (Test-IsSkipPath -PathToTest $skipPathCandidate) { return $true }
 
     return $false
 }
@@ -1608,9 +1611,9 @@ function Test-IsSkipPath {
     }
 
     $lower = $normalized.ToLower()
-    if ($lower -like '*\\onedrive*' -or $lower -like '*microsoft\\onedrive*' -or $lower -like '*filesondemand*') { return $true }
-    # Additional robust token match for OneDrive that tolerates spaces and suffixes
-    if ($normalized -match '(?i)\bonedrive\b' -or $normalized -match '(?i)onedrive') { return $true }
+    if ($lower -like '*filesondemand*') { return $true }
+    # Additional robust token match for OneDrive sidecar file extensions that should never be removed.
+    if ($normalized -match '(?i)\\onedrive[^\\]*\.(odl|odlgz|aodl)$') { return $true }
 
     foreach ($pattern in $skipPathPatterns) {
         if (-not $pattern) { continue }
@@ -1620,24 +1623,84 @@ function Test-IsSkipPath {
                 return $true
             }
         }
-        catch {
-            # If pattern isn't a valid regex, fallback to case-insensitive containment check
-            if ($normalized.ToLower().Contains($pattern.ToLower())) { return $true }
-        }
-    }
-    # Additional fallback: some patterns are written as regex with escaped backslashes or tokens
-    # If regex didn't match, attempt a sanitized containment check by removing common regex metacharacters
-    foreach ($pattern in $skipPathPatterns) {
-        if (-not $pattern) { continue }
-        # Remove inline (?i) flags and common regex constructs to extract a token
-        $token = $pattern -replace '\(\?i\)', '' -replace '[\\\^\$\.\|\?\*\+\(\)\[\]\{\}]', ''
-        $token = $token.Trim()
-        if ($token.Length -gt 1) {
-            if ($normalized.ToLower().Contains($token.ToLower())) { return $true }
-        }
+        catch { Write-Verbose "Ignoring invalid skip-path regex pattern '$pattern': $_" }
     }
 
     return $false
+}
+
+function ConvertTo-LogText {
+    param(
+        [AllowNull()]
+        [object]$InputObject
+    )
+
+    if ($null -eq $InputObject) { return '<no output>' }
+
+    if ($InputObject -is [string]) {
+        $stringValue = $InputObject.Trim()
+        if ($stringValue) { return $stringValue }
+        return '<no output>'
+    }
+
+    if ($InputObject -is [System.Collections.IEnumerable] -and -not ($InputObject -is [string])) {
+        $parts = New-Object System.Collections.Generic.List[string]
+        foreach ($entry in $InputObject) {
+            if ($null -eq $entry) { continue }
+            $text = ($entry.ToString()).Trim()
+            if ($text) { $parts.Add($text) | Out-Null }
+        }
+
+        if ($parts.Count -gt 0) { return ($parts -join ' | ') }
+        return '<no output>'
+    }
+
+    $value = ($InputObject.ToString()).Trim()
+    if ($value) { return $value }
+
+    return '<no output>'
+}
+
+function Test-IsElevatedSession {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+
+    try {
+        $currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        if (-not $currentIdentity) { return $false }
+
+        $principal = New-Object System.Security.Principal.WindowsPrincipal($currentIdentity)
+        return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+    }
+    catch {
+        Write-Verbose "Failed to determine elevation state: $_"
+        return $false
+    }
+}
+
+function Get-ExecutionCapabilities {
+    [CmdletBinding()]
+    [OutputType('System.Collections.Hashtable')]
+    param()
+
+    $isElevated = Test-IsElevatedSession
+    $skippedAdminRegions = New-Object System.Collections.Generic.List[string]
+    if (-not $isElevated) {
+        foreach ($regionName in @('DISM component store cleanup', 'event log cleanup', 'CleanMgr registry preparation', 'CleanMgr run', 'Windows.old removal')) {
+            $skippedAdminRegions.Add($regionName) | Out-Null
+        }
+    }
+
+    return @{
+        IsElevated          = $isElevated
+        CanRunDISM          = $isElevated
+        CanManageEventLogs  = $isElevated
+        CanPrepareCleanMgr  = $isElevated
+        CanRunCleanMgr      = $isElevated
+        CanRemoveWindowsOld = $isElevated
+        SkippedAdminRegions = @($skippedAdminRegions)
+    }
 }
 
 # Ensure main log exists (do not delete previous logs)
@@ -1715,11 +1778,28 @@ catch {
 # endregion
 
 # region 0G - Start the script
+# Allow tests and advanced operators to dot-source the script to load helpers
+# without executing the remediation workflow.
+if ($MyInvocation.InvocationName -eq '.') { return }
+
+$script:ExecutionCapabilities = Get-ExecutionCapabilities
+$script:CleanMgrPreparationSummary = @{
+    ConfiguredCount     = 0
+    MissingCount        = 0
+    WouldConfigureCount = 0
+    FailedCount         = 0
+    WasSkipped          = $false
+    SkipReason          = $null
+}
+
 Write-CustomMessage "Intune free space remediation script"
 Write-CustomMessage "===================================="
 Write-CustomMessage ""
 Write-CustomMessage "Commencing script"
 Write-CustomMessage ""
+if (-not $script:ExecutionCapabilities.IsElevated) {
+    Write-CustomMessage ("Session is not elevated. Admin-only remediation regions will be skipped: {0}." -f ($script:ExecutionCapabilities.SkippedAdminRegions -join ', ')) -Level WARN
+}
 
 # Capture an initial probe snapshot and free space for later DryRun summaries.
 try {
@@ -1971,12 +2051,15 @@ else {
 if (-not $Pref_DISMComponentStoreCleanup) {
     Write-CustomMessage "SKIPPED: DISM component store cleanup disabled via Pref_DISMComponentStoreCleanup=$Pref_DISMComponentStoreCleanup." -Level INFO
 }
+elseif (-not $script:ExecutionCapabilities.CanRunDISM) {
+    Write-CustomMessage "SKIPPED: DISM component store cleanup requires an elevated session." -Level WARN
+}
 else {
     try {
         Invoke-DISMCleanup | Out-Null
     }
     catch {
-        Write-CustomMessage ("ERROR: DISM cleanup encountered an exception: {0}" -f $($_.Exception.Message))
+        Write-CustomMessage ("DISM cleanup encountered an exception: {0}" -f $($_.Exception.Message)) -Level ERROR
     }
 }
 # endregion
@@ -1984,6 +2067,9 @@ else {
 # region 5A - Clean up old event logs
 if (-not $Pref_EventLogCleanup) {
     Write-CustomMessage "SKIPPED: Event log cleanup disabled via Pref_EventLogCleanup=$Pref_EventLogCleanup." -Level INFO
+}
+elseif (-not $script:ExecutionCapabilities.CanManageEventLogs) {
+    Write-CustomMessage "SKIPPED: Event log cleanup requires an elevated session." -Level WARN
 }
 else {
     try {
@@ -2029,7 +2115,8 @@ else {
                             }
                         }
                         else {
-                            Write-CustomMessage (("WARNING: wevtutil epl returned exit code {0} for {1}. Output: {2}" -f $res.ExitCode, $log, $res.Output)) -Level WARN
+                            $exportOutput = ConvertTo-LogText -InputObject $res.Output
+                            Write-CustomMessage (("wevtutil epl returned exit code {0} for {1}. Output: {2}" -f $res.ExitCode, $log, $exportOutput)) -Level WARN
                         }
                     }
                 }
@@ -2092,9 +2179,16 @@ else {
 # region 7A - CleanMgr registry preparation
 if (-not $Pref_CleanMgrPrep) {
     Write-CustomMessage "SKIPPED: CleanMgr registry preparation disabled by Pref_CleanMgrPrep." -Level INFO
+    $script:CleanMgrPreparationSummary.WasSkipped = $true
+    $script:CleanMgrPreparationSummary.SkipReason = 'PreferenceDisabled'
+}
+elseif (-not $script:ExecutionCapabilities.CanPrepareCleanMgr) {
+    Write-CustomMessage "SKIPPED: CleanMgr registry preparation requires an elevated session." -Level WARN
+    $script:CleanMgrPreparationSummary.WasSkipped = $true
+    $script:CleanMgrPreparationSummary.SkipReason = 'NotElevated'
 }
 else {
-    Set-CleanMgrCategories -Types $cleanupTypeSelection | Out-Null
+    $script:CleanMgrPreparationSummary = Set-CleanMgrCategories -Types $cleanupTypeSelection
 }
 #endregion
 
@@ -2102,6 +2196,9 @@ else {
 
 if (-not $Pref_RunCleanMgr) {
     Write-CustomMessage "SKIPPED: CleanMgr run disabled by Pref_RunCleanMgr." -Level INFO
+}
+elseif (-not $script:ExecutionCapabilities.CanRunCleanMgr) {
+    Write-CustomMessage "SKIPPED: CleanMgr run requires an elevated session." -Level WARN
 }
 else {
     try {
@@ -2111,79 +2208,84 @@ else {
             throw "CleanMgr executable not found."
         }
 
-        Write-CustomMessage "Prepared CleanMgr categories; CleanMgr run will be invoked using /sagerun:1 to apply configured categories."
-        # Diagnostic: list which CleanMgr registry keys were set and their StateFlags0001 values (read-only)
-        try {
-            Write-CustomMessage "CleanMgr diagnostic: enumerating configured VolumeCaches keys and their StateFlags0001 values."
-            $vcRoot = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches'
-            if (Test-Path $vcRoot) {
-                Get-ChildItem -Path $vcRoot -ErrorAction SilentlyContinue | ForEach-Object {
-                    try {
-                        $cat = $_.PSChildName
-                        $props = Get-ItemProperty -Path $_.PSPath -Name 'StateFlags0001' -ErrorAction SilentlyContinue
-                        $flag = if ($props -and $props.StateFlags0001 -ne $null) { $props.StateFlags0001 } else { '<not set>' }
-                        Write-CustomMessage ("CleanMgr diagnostic: Category='{0}', StateFlags0001={1}" -f $cat, $flag)
-                    }
-                    catch {
-                        Write-CustomMessage ("CleanMgr diagnostic: Failed reading {0}: {1}" -f $_.PSChildName, $_)
-                    }
-                }
-            }
-            else { Write-CustomMessage "CleanMgr diagnostic: VolumeCaches registry root not found: $vcRoot" }
+        if ($script:CleanMgrPreparationSummary.WasSkipped) {
+            Write-CustomMessage ("CleanMgr preparation was skipped ({0}); skipping /sagerun:1 to avoid using stale category state." -f $script:CleanMgrPreparationSummary.SkipReason) -Level WARN
         }
-        catch { Write-CustomMessage "CleanMgr diagnostic: enumeration failed: $_" }
-        finally {
-            # Probe paths to capture before/after sizes for diagnostic purposes (read-only)
-            $probePaths = @(
-                "$env:TEMP",
-                "C:\Windows\Temp",
-                "$env:SystemRoot\SoftwareDistribution\Download",
-                "$env:SystemRoot\\Downloaded Program Files"
-            )
-
-            try { $preSnapshot = Get-ProbeSnapshot -PathsToProbe $probePaths -IgnorePrune } catch { $preSnapshot = @{} }
-
-            # Attempt to run cleanmgr in silent sagerun mode regardless of diagnostic/merge-log outcome.
+        else {
+            Write-CustomMessage ("CleanMgr category preparation summary: Configured={0}; Missing={1}; Failed={2}; WouldConfigure={3}." -f $script:CleanMgrPreparationSummary.ConfiguredCount, $script:CleanMgrPreparationSummary.MissingCount, $script:CleanMgrPreparationSummary.FailedCount, $script:CleanMgrPreparationSummary.WouldConfigureCount)
+            # Diagnostic: list which CleanMgr registry keys were set and their StateFlags0001 values (read-only)
             try {
-                if (Test-Path $cleanMgrPath) {
-                    $whatIfRequested = $false
-                    if ($PSBoundParameters.ContainsKey('WhatIf')) { $whatIfRequested = $true }
-                    if ($whatIfRequested -or $DryRun) {
-                        Write-CustomMessage "DRYRUN: Would invoke CleanMgr to apply configured categories (/sagerun:1)." -Level INFO
-                    }
-                    elseif ($PSCmdlet -and -not $PSCmdlet.ShouldProcess($cleanMgrPath, 'Run cleanmgr /sagerun:1')) {
-                        Write-CustomMessage "ShouldProcess declined: skipping CleanMgr run." -Level INFO
-                    }
-                    else {
-                        Write-CustomMessage "Invoking CleanMgr to apply configured categories (/sagerun:1)."
+                Write-CustomMessage "CleanMgr diagnostic: enumerating configured VolumeCaches keys and their StateFlags0001 values."
+                $vcRoot = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches'
+                if (Test-Path $vcRoot) {
+                    Get-ChildItem -Path $vcRoot -ErrorAction SilentlyContinue | ForEach-Object {
                         try {
-                            $proc = Start-Process -FilePath $cleanMgrPath -ArgumentList '/sagerun:1' -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
-                            if ($proc -and $proc.ExitCode -eq 0) { Write-CustomMessage "CleanMgr completed with exit code 0." }
-                            elseif ($proc) { Write-CustomMessage (("WARNING: CleanMgr returned exit code {0}." -f $proc.ExitCode)) -Level WARN }
+                            $cat = $_.PSChildName
+                            $props = Get-ItemProperty -Path $_.PSPath -Name 'StateFlags0001' -ErrorAction SilentlyContinue
+                            $flag = if ($props -and $props.StateFlags0001 -ne $null) { $props.StateFlags0001 } else { '<not set>' }
+                            Write-CustomMessage ("CleanMgr diagnostic: Category='{0}', StateFlags0001={1}" -f $cat, $flag)
                         }
-                        catch { Write-CustomMessage (("ERROR: Failed to start or run CleanMgr: {0}" -f $_)) -Level ERROR }
+                        catch {
+                            Write-CustomMessage ("CleanMgr diagnostic: Failed reading {0}: {1}" -f $_.PSChildName, $_)
+                        }
                     }
                 }
-                else { Write-CustomMessage "WARNING: cleanmgr.exe not found at expected path: $cleanMgrPath" -Level WARN }
+                else { Write-CustomMessage "CleanMgr diagnostic: VolumeCaches registry root not found: $vcRoot" }
             }
-            catch { Write-CustomMessage "ERROR: Failed to invoke CleanMgr: $_" }
+            catch { Write-CustomMessage "CleanMgr diagnostic: enumeration failed: $_" }
+            finally {
+                # Probe paths to capture before/after sizes for diagnostic purposes (read-only)
+                $probePaths = @(
+                    "$env:TEMP",
+                    "C:\Windows\Temp",
+                    "$env:SystemRoot\SoftwareDistribution\Download",
+                    "$env:SystemRoot\\Downloaded Program Files"
+                )
 
-            # Post-snapshot and compute delta (where possible)
-            try { $postSnapshot = Get-ProbeSnapshot -PathsToProbe $probePaths -IgnorePrune } catch { $postSnapshot = @{} }
-            try {
-                foreach ($p in $probePaths) {
-                    $preObj = $null; $postObj = $null
-                    if ($preSnapshot.ContainsKey($p)) { $preObj = $preSnapshot[$p] }
-                    if ($postSnapshot.ContainsKey($p)) { $postObj = $postSnapshot[$p] }
-                    if ($null -ne $preObj) { $preBytes = [int64]($preObj.Bytes -as [int64]) } else { $preBytes = 0 }
-                    if ($null -ne $postObj) { $postBytes = [int64]($postObj.Bytes -as [int64]) } else { $postBytes = 0 }
-                    $delta = $preBytes - $postBytes
-                    $deltaMB = [math]::Round($delta / 1MB, 2)
-                    $deltaGB = [math]::Round($delta / 1GB, 2)
-                    Write-CustomMessage ("Probe delta: Path='{0}', Before={1} bytes ({2} MB), After={3} bytes ({4} MB), Freed={5} MB ({6} GB)" -f $p, $preBytes, ([math]::Round($preBytes / 1MB, 2)), $postBytes, ([math]::Round($postBytes / 1MB, 2)), $deltaMB, $deltaGB)
+                try { $preSnapshot = Get-ProbeSnapshot -PathsToProbe $probePaths -IgnorePrune } catch { $preSnapshot = @{} }
+
+                # Attempt to run cleanmgr in silent sagerun mode regardless of diagnostic/merge-log outcome.
+                try {
+                    if (Test-Path $cleanMgrPath) {
+                        $whatIfRequested = $false
+                        if ($PSBoundParameters.ContainsKey('WhatIf')) { $whatIfRequested = $true }
+                        if ($whatIfRequested -or $DryRun) {
+                            Write-CustomMessage "DRYRUN: Would invoke CleanMgr to apply configured categories (/sagerun:1)." -Level INFO
+                        }
+                        elseif ($PSCmdlet -and -not $PSCmdlet.ShouldProcess($cleanMgrPath, 'Run cleanmgr /sagerun:1')) {
+                            Write-CustomMessage "ShouldProcess declined: skipping CleanMgr run." -Level INFO
+                        }
+                        else {
+                            Write-CustomMessage "Invoking CleanMgr to apply configured categories (/sagerun:1)."
+                            try {
+                                $proc = Start-Process -FilePath $cleanMgrPath -ArgumentList '/sagerun:1' -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
+                                if ($proc -and $proc.ExitCode -eq 0) { Write-CustomMessage "CleanMgr completed with exit code 0." }
+                                elseif ($proc) { Write-CustomMessage (("WARNING: CleanMgr returned exit code {0}." -f $proc.ExitCode)) -Level WARN }
+                            }
+                            catch { Write-CustomMessage (("ERROR: Failed to start or run CleanMgr: {0}" -f $_)) -Level ERROR }
+                        }
+                    }
+                    else { Write-CustomMessage "WARNING: cleanmgr.exe not found at expected path: $cleanMgrPath" -Level WARN }
                 }
+                catch { Write-CustomMessage "ERROR: Failed to invoke CleanMgr: $_" }
+
+                # Post-snapshot and compute delta (where possible)
+                try { $postSnapshot = Get-ProbeSnapshot -PathsToProbe $probePaths -IgnorePrune } catch { $postSnapshot = @{} }
+                try {
+                    foreach ($p in $probePaths) {
+                        $preObj = $null; $postObj = $null
+                        if ($preSnapshot.ContainsKey($p)) { $preObj = $preSnapshot[$p] }
+                        if ($postSnapshot.ContainsKey($p)) { $postObj = $postSnapshot[$p] }
+                        if ($null -ne $preObj) { $preBytes = [int64]($preObj.Bytes -as [int64]) } else { $preBytes = 0 }
+                        if ($null -ne $postObj) { $postBytes = [int64]($postObj.Bytes -as [int64]) } else { $postBytes = 0 }
+                        $delta = $preBytes - $postBytes
+                        $deltaMB = [math]::Round($delta / 1MB, 2)
+                        $deltaGB = [math]::Round($delta / 1GB, 2)
+                        Write-CustomMessage ("Probe delta: Path='{0}', Before={1} bytes ({2} MB), After={3} bytes ({4} MB), Freed={5} MB ({6} GB)" -f $p, $preBytes, ([math]::Round($preBytes / 1MB, 2)), $postBytes, ([math]::Round($postBytes / 1MB, 2)), $deltaMB, $deltaGB)
+                    }
+                }
+                catch { Write-CustomMessage "WARNING: Failed to compute probe deltas: $_" }
             }
-            catch { Write-CustomMessage "WARNING: Failed to compute probe deltas: $_" }
         }
     }
     catch {
@@ -2196,6 +2298,9 @@ else {
 # region 7C - Optional: Remove C:\Windows.old (pref-gated, dry-run-aware)
 if (-not $Pref_RemoveWindowsOld) {
     Write-CustomMessage "SKIPPED: Removal of C:\Windows.old is disabled by Pref_RemoveWindowsOld." -Level INFO
+}
+elseif (-not $script:ExecutionCapabilities.CanRemoveWindowsOld) {
+    Write-CustomMessage "SKIPPED: Removal of C:\Windows.old requires an elevated session." -Level WARN
 }
 else {
     try {
@@ -2262,9 +2367,6 @@ catch {
 if (-not (Test-Path -Path $tempLogFile)) {
     if ($DryRun -or $PreserveTempLog) {
         Write-CustomMessage "WARNING: Temporary log file was expected to remain available during wrap-up but was not found: $tempLogFile" -Level WARN
-    }
-    else {
-        Write-Verbose "Temporary log file already absent during wrap-up: $tempLogFile"
     }
 }
 
@@ -2338,11 +2440,18 @@ $finalFreeSpaceGB = [math]::Round($finalFreeSpaceBytes / 1GB, 2)
 $spaceRecoveredBytes = $finalFreeSpaceBytes - $freeSpaceBytes
 $spaceRecoveredGB = [math]::Round($spaceRecoveredBytes / 1GB, 2)
 Write-CustomMessage "Final free space: $finalFreeSpaceGB GB ($([math]::Round($finalFreeSpaceBytes/1MB,2)) MB)"
-Write-CustomMessage "Space recovered: $spaceRecoveredGB GB ($([math]::Round($spaceRecoveredBytes/1MB,2)) MB)"
+if ($spaceRecoveredBytes -lt 0) {
+    Write-CustomMessage "Net free-space delta: $spaceRecoveredGB GB ($([math]::Round($spaceRecoveredBytes/1MB,2)) MB). Negative values indicate the disk grew during the measurement window." -Level WARN
+}
+else {
+    Write-CustomMessage "Space recovered: $spaceRecoveredGB GB ($([math]::Round($spaceRecoveredBytes/1MB,2)) MB)"
+}
 # endregion
 
 # region 8C - Resolve log export failures
-Write-CustomMessage "Note: Event-log exports were performed earlier; skipping redundant export loop in region 8C to avoid duplicate operations." -Level INFO
+if ($Verbosity -eq 'Verbose') {
+    Write-CustomMessage "Verbose note: event-log exports already ran in the canonical region; no wrap-up export pass is required." -Level INFO
+}
 #endregion
 
 # region 8D - Handle file locking issues during log consolidation
