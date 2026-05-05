@@ -1,0 +1,22 @@
+The dotnet runtime version is '10.0.1'.
+Formatting code files in workspace 'c:\Users\pc\OneDrive - Crispy Kangaroo\Documents\GitProjects\PowerShellScriptingNew\ScriptLauncher\ScriptLauncher.csproj'.
+Loading workspace.
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+Project ScriptLauncher is using configuration from 'c:\Users\pc\OneDrive - Crispy Kangaroo\Documents\GitProjects\PowerShellScriptingNew\.editorconfig'.
+Project ScriptLauncher is using configuration from 'c:\Users\pc\OneDrive - Crispy Kangaroo\Documents\GitProjects\PowerShellScriptingNew\ScriptLauncher\obj\Debug\net10.0-windows\ScriptLauncher.GeneratedMSBuildEditorConfig.editorconfig'.
+Project ScriptLauncher is using configuration from 'C:\Program Files\dotnet\sdk\10.0.101\Sdks\Microsoft.NET.Sdk\analyzers\build\config\analysislevel_10_default.globalconfig'.
+Complete in 6800ms.
+Determining formattable files.
+Complete in 787ms.
+Running formatters.
+Running Analyzer Reference analysis.
+Determining diagnostics...
+Running 267 analyzers on ScriptLauncher.
+Complete in 4933ms.
+Fixing diagnostics...
+Complete in 2ms.
+Analysis complete in 4935ms.
+Complete in 5307ms.
+Formatted 0 of 40 files.
+Format complete in 12918ms.

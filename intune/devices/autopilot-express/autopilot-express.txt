@@ -1,0 +1,1003 @@
+# <!-- omit from toc -->
+# .SYNOPSIS
+#    Command line framework for streamlining Intune Autopilot device preparation and tracking.
+# .DESCRIPTION
+#    This script provides a scaffolded, accessible, menu-driven UI for technicians performing Autopilot builds.
+#    It captures device metadata, tracks progress across Autopilot steps, and outlines (in comments) required
+#    Microsoft Graph / Intune / Entra ID endpoints and permissions for future implementation. It intentionally
+#    does NOT yet implement live Graph calls – those are documented for later development.
+# .FILECREATED     2025-12-01
+# .FILELASTUPDATED 2025-12-01
+# .AUTHOR          Michael Harris (Framework generated collaboratively)
+# .VERSION         0.1.0-framework
+# .LICENSE         Refer to root LICENSE (MIT)
+# .DOCUMENTATION   README.md, .website/ (canonical)
+# .ACCESSIBILITY   All prompts support screen readers (no colour-only cues)
+# .NOTES
+#    Root-resolution pattern, logging, validation, and menu structure follow project standards.
+#    EN-AU spelling is used for documentation and comments.
+#
+# ==============================================================================================
+# MENU STRUCTURE (ASCII, Accessible) - Draft
+# (Annotations reflect intent; actual functions are stubbed.)
+#
+# Main Menu:
+#   1. Start work on a new device        (Capture metadata, confirm site, assign group tag, add to groups)
+#   2. Autopilot the device              (Sub-menu: reseal prep, shared device, assign primary user, apps check, fix app, manufacturer update)
+#   3. What's outstanding for a device   (Query by Serial or Configuration Item; show progress, suggest next steps)
+#   4. Maintain my device list           (Update status: new | in-progress | completed | removed)
+#   5. My stats and progress             (Per-user and roll-up stats; site/device type breakdown)
+#   6. Enhancements & questions          (Show potential future ideas; gather clarification needs)
+#   7. Change current site               (Select a different site mid-run)
+#   0. Exit                              (Clean shutdown, save state)
+#
+# Autopilot Sub-Menu (Option 2):
+#   A. Prepare for reseal                (Future: Trigger device sync, ensure apps baseline)
+#   B. Shared device provisioning        (Future: Add to specific Entra groups, enforce shared profile policies)
+#   C. Assign primary user               (Future: Fuzzy search; validate managerial relationship if shared groups present)
+#   D. Application check                 (Future: Graph DeviceManagedAppStatus + sync if stale)
+#   E. Fix specific application          (Zenworks White file copy stub)
+#   F. Manufacturer software update      (Invoke vendor CLI; confirm install)
+#   R. Return to main menu               (Return w/o changes)
+#
+# ==============================================================================================
+# FUTURE GRAPH / INTUNE / ENTRA REQUIREMENTS (Reference Only)
+# PERMISSIONS (least privilege starting point; refine as implementation evolves):
+#   Device Onboarding / Autopilot:
+#     - Device.Read.All (Application) / Device.ReadWrite.All for tagging operations
+#     - DeviceManagementServiceConfig.ReadWrite.All (manage Autopilot profiles & tags)
+#     - DeviceManagementManagedDevices.Read.All (query device state, apps, sync)
+#     - Group.ReadWrite.All (adding/removing device to support groups)
+#     - User.Read.All + Directory.Read.All (primary user assignment, managerial checks)
+#     - DeviceManagementConfiguration.Read.All (verify configuration policies) *Potential*
+# GRAPH ENDPOINTS (illustrative):
+#   List Autopilot devices:   GET https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities
+#   Get device by serial:     GET .../windowsAutopilotDeviceIdentities?$filter=serialNumber eq '{serial}'
+#   Update group tag:         PATCH .../windowsAutopilotDeviceIdentities/{id} { "groupTag": "TAG" }
+#   Remove Autopilot record:  DELETE .../windowsAutopilotDeviceIdentities/{id}
+#   Get Entra device:         GET https://graph.microsoft.com/v1.0/devices?$filter=deviceId eq '{guid}'
+#   Add device to group:      POST .../groups/{groupId}/members/$ref { "@odata.id": "https://graph.microsoft.com/v1.0/devices/{id}" }
+#   List managed apps:        GET https://graph.microsoft.com/beta/deviceManagement/managedDevices/{id}/detectedApps
+#   Trigger device sync:      POST .../managedDevices/{id}/syncDevice
+#   Set primary user:         POST .../managedDevices/{id}/users/$ref (or assign in devices endpoint – subject to current API)
+#   Manufacturer updates:     Vendor-specific CLI (outside Graph) – ensure elevation & remote execution rights.
+#
+# SECURITY & AUDIT CONSIDERATIONS:
+#   - All future API calls must implement retry, timeout (-TimeoutSec), logging of request correlation IDs.
+#   - Handle 429 throttling via Retry-After headers.
+#   - Avoid storing secrets locally; use Managed Identity or secure token cache approach.
+#
+# ==============================================================================================
+# ROOT RESOLUTION (Robust) & ENV VAR SETUP
+try {
+    if (-not $env:PowerShellScriptingNewRoot) {
+        $scriptDir = Split-Path -Parent $PSCommandPath
+        # Traverse upwards until we find an anchor file (README.md | LICENSE | .git)
+        $current = $scriptDir
+        $maxDepth = 10
+        for ($i = 0; $i -lt $maxDepth; $i++) {
+            $anchorReadme = Test-Path (Join-Path $current 'README.md')
+            $anchorLicense = Test-Path (Join-Path $current 'LICENSE')
+            $anchorGit = Test-Path (Join-Path $current '.git')
+            if ($anchorReadme -or $anchorLicense -or $anchorGit) { $env:PowerShellScriptingNewRoot = $current; break }
+            $parent = Split-Path -Parent $current
+            if ($parent -eq $current) { break }
+            $current = $parent
+        }
+        if (-not $env:PowerShellScriptingNewRoot) { $env:PowerShellScriptingNewRoot = $scriptDir }
+    }
+}
+catch {
+    Write-Host ('Failed to resolve project root: {0}' -f $_.Exception.Message)
+}
+
+# LOGGING (Simple placeholder; project may have central logging module to leverage later)
+function Write-Log {
+    <#
+		.SYNOPSIS
+			Writes a timestamped message to console and (future) log file.
+		.PARAMETER Message
+			The message text.
+		.PARAMETER Level
+			Log level (INFO, WARN, ERROR, DEBUG)
+	#>
+    param(
+        [Parameter(Mandatory)][string]$Message,
+        [ValidateSet('INFO', 'WARN', 'ERROR', 'DEBUG')][string]$Level = 'INFO'
+    )
+    $ts = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    Write-Host ('[{0}] [{1}] {2}' -f $ts, $Level, $Message)
+}
+
+# CONFIGURATION TOGGLES & NOMENCLATURE
+$Script:Config = [ordered]@{
+    OrganisationName              = 'Example Health Network'
+    Nomenclature                  = [ordered]@{ Serial = 'Serial'; ConfigItem = 'Configuration Item'; Site = 'Site'; DeviceType = 'Device Type'; GroupTag = 'Group Tag' }
+    EnableSharedDeviceFlow        = $true
+    EnablePrimaryUserAssignment   = $true
+    EnableManufacturerUpdate      = $true
+    EnableApplicationCheck        = $true
+    EnableZenworksWhiteFix        = $true
+    RequireManagerForSharedAssign = $true
+    SupportAutopilotGroupAdd      = $true
+    SupportAutopilotDeleteRecord  = $true
+    DataFolderRelative            = 'data'
+    UserDataFilePrefix            = 'autopilot-devices'
+    AutopilotSupportGroupIds      = @('00000000-0000-0000-0000-000000000000')  # Placeholder group GUIDs
+    ManufacturerUpdateCommand     = 'VendorUpdateTool.exe'
+    ManufacturerUpdateArgs        = '--silent --acceptEula'
+    MaxRetryAttempts              = 5
+    RetryBackoffSeconds           = 3
+    LockFolderRelative            = 'data/locks'
+}
+
+# HARD-CODED SITE LIST (Extendable)
+$Script:Sites = @(
+    [ordered]@{ Code = 'MI'; Name = 'Midland' }
+    [ordered]@{ Code = 'MU'; Name = 'Murdoch' }
+    [ordered]@{ Code = 'SU'; Name = 'Subiaco' }
+    [ordered]@{ Code = 'GE'; Name = 'Geraldton' }
+    [ordered]@{ Code = 'AL'; Name = 'Albany' }
+)
+
+# HARD-CODED DEVICE TYPES (Extendable)
+$Script:DeviceTypes = @('Desktop', 'Laptop', 'WOW', 'NUC')
+
+# STEP MANIFEST (structured definitions with permissions/endpoints)
+$Script:StepManifest = @(
+    [ordered]@{ Id = 'A'; DisplayName = 'Prepare for reseal'; Enabled = $true; RequiredPermissions = @('DeviceManagementManagedDevices.ReadWrite.All'); GraphEndpoints = @('POST /managedDevices/{id}/syncDevice'); Notes = 'Ensure device synced and baseline ready.' }
+    [ordered]@{ Id = 'B'; DisplayName = 'Shared device provisioning'; Enabled = $true; RequiredPermissions = @('Group.ReadWrite.All'); GraphEndpoints = @('POST /groups/{groupId}/members/$ref'); Notes = 'Add to shared groups, apply shared policies.' }
+    [ordered]@{ Id = 'C'; DisplayName = 'Assign primary user'; Enabled = $true; RequiredPermissions = @('User.Read.All', 'DeviceManagementManagedDevices.ReadWrite.All'); GraphEndpoints = @('POST /managedDevices/{id}/users/$ref'); Notes = 'Fuzzy search, manager validation required for shared.' }
+    [ordered]@{ Id = 'D'; DisplayName = 'Application check'; Enabled = $true; RequiredPermissions = @('DeviceManagementManagedDevices.Read.All'); GraphEndpoints = @('GET /deviceManagement/managedDevices/{id}/detectedApps'); Notes = 'Check baseline apps present; trigger sync if stale.' }
+    [ordered]@{ Id = 'E'; DisplayName = 'Fix specific application (Zenworks White)'; Enabled = $true; RequiredPermissions = @(); GraphEndpoints = @(); Notes = 'Copy folder contents; may require admin creds.' }
+    [ordered]@{ Id = 'F'; DisplayName = 'Manufacturer software update'; Enabled = $true; RequiredPermissions = @(); GraphEndpoints = @(); Notes = 'Invoke vendor CLI (Dell Command for now); confirm install.' }
+)
+
+# ENHANCEMENT MANIFEST (drives dynamic enhancements list)
+$Script:EnhancementManifest = @(
+    [ordered]@{ Id = 1; Title = 'Concurrent device locking'; Description = 'Prevent duplicate work across technicians.'; Status = 'Planned' }
+    [ordered]@{ Id = 2; Title = 'Service Management integration'; Description = 'Update ITIL CMDB with device build events.'; Status = 'Planned' }
+    [ordered]@{ Id = 3; Title = 'Fuzzy user search + manager check'; Description = 'Assist primary user assignment, validate manager chain for shared.'; Status = 'Planned' }
+    [ordered]@{ Id = 4; Title = 'Baseline policy compliance scan'; Description = 'Check devices for required policies before reseal.'; Status = 'Planned' }
+    [ordered]@{ Id = 5; Title = 'Offline caching for field techs'; Description = 'Queue updates when offline, sync later.'; Status = 'Planned' }
+    [ordered]@{ Id = 6; Title = 'Export CSV & HTML reports'; Description = 'One-click exports for management reporting.'; Status = 'Planned' }
+    [ordered]@{ Id = 7; Title = 'Pester tests'; Description = 'Unit tests for each workflow path.'; Status = 'Planned' }
+    [ordered]@{ Id = 8; Title = 'Localisation'; Description = 'Multi-language prompts and messages.'; Status = 'Planned' }
+    [ordered]@{ Id = 9; Title = 'Telemetry dashboard'; Description = 'Optional Power BI ingestion for trend analysis.'; Status = 'Planned' }
+    [ordered]@{ Id = 10; Title = 'Secure token cache & refresh'; Description = 'Hardened auth flow for Graph integration.'; Status = 'Planned' }
+)
+
+# DATA SCHEMA (Class for device tracking)
+class AutopilotDeviceRecord {
+    [string]$Serial
+    [string]$EntraDeviceId
+    [string]$ConfigItem
+    [string]$SiteCode
+    [string]$DeviceType
+    [string]$GroupTag
+    [string]$Status               # new | in-progress | completed | removed
+    [hashtable]$Steps             # stepName => @{ Success = $true/$false; Timestamp = [DateTime]; Notes = 'string' }
+    [DateTime]$StartedAt
+    [string]$StartedBy
+    [DateTime]$LastUpdatedAt
+    [string]$LastUpdatedBy
+    [DateTime]$CompletedAt
+    [string]$CompletedBy
+    [bool]$IsCompletionVerified
+    AutopilotDeviceRecord() {}
+}
+
+# Safely append a device record to the records collection
+function Add-DeviceRecord {
+    param(
+        [Parameter(Mandatory)][ref]$Records,
+        [Parameter(Mandatory)][AutopilotDeviceRecord]$Record
+    )
+    if ($null -eq $Records.Value) { $Records.Value = @() }
+    if ($Records.Value -is [System.Collections.IList]) {
+        [void]$Records.Value.Add($Record)
+    }
+    else {
+        $Records.Value = @($Records.Value) + @($Record)
+    }
+}
+
+# USER DATA FILE PATH RESOLUTION
+function Get-UserDataFilePath {
+    $root = $env:PowerShellScriptingNewRoot
+    $dataFolder = Join-Path $root $Script:Config.DataFolderRelative
+    if (-not (Test-Path $dataFolder)) { New-Item -ItemType Directory -Path $dataFolder | Out-Null }
+    $user = $env:USERNAME
+    return Join-Path $dataFolder ("{0}-{1}.json" -f $Script:Config.UserDataFilePrefix, $user)
+}
+
+function Get-UserDeviceRecords {
+    $path = Get-UserDataFilePath
+    if (-not (Test-Path $path)) {
+        return @()  # Return an empty array if the path does not exist
+    }
+    try {
+        $json = Get-Content -Raw -Path $path
+        $data = ($json | ConvertFrom-Json)
+        # Convert PSCustomObjects to class instances
+        $records = @()
+        foreach ($r in $data) {
+            $obj = [AutopilotDeviceRecord]::new()
+            $obj.Serial = $r.Serial
+            $obj.EntraDeviceId = $r.EntraDeviceId
+            $obj.ConfigItem = $r.ConfigItem
+            $obj.SiteCode = $r.SiteCode
+            $obj.DeviceType = $r.DeviceType
+            $obj.GroupTag = $r.GroupTag
+            $obj.Status = $r.Status
+            $obj.Steps = $r.Steps
+            $obj.StartedAt = $r.StartedAt
+            $obj.StartedBy = $r.StartedBy
+            $obj.LastUpdatedAt = $r.LastUpdatedAt
+            $obj.LastUpdatedBy = $r.LastUpdatedBy
+            $obj.CompletedAt = $r.CompletedAt
+            $obj.CompletedBy = $r.CompletedBy
+            $obj.IsCompletionVerified = $r.IsCompletionVerified
+            $records += $obj
+        }
+        return $records
+    }
+    catch {
+        Write-Log -Message ('Failed to load user data file: {0}' -f $_.Exception.Message) -Level 'ERROR'
+        return @()
+    }
+}
+
+function Write-UserDeviceRecords {
+    param([Parameter(Mandatory)][array]$Records)
+    $path = Get-UserDataFilePath
+    try {
+        $Records | ConvertTo-Json -Depth 6 | Set-Content -Path $path -Encoding UTF8  # Save records to user data file
+        Write-Log -Message ('Saved {0} device record(s) to {1}' -f $Records.Count, $path) -Level 'INFO'
+    }
+    catch {
+        Write-Log -Message ('Failed to save user device records: {0}' -f $_.Exception.Message) -Level 'ERROR'
+    }
+}
+
+function Get-LockFilePath {
+    param([Parameter(Mandatory)][string]$Serial)
+    $root = $env:PowerShellScriptingNewRoot
+    $lockFolder = Join-Path $root $Script:Config.LockFolderRelative
+    if (-not (Test-Path $lockFolder)) { New-Item -ItemType Directory -Path $lockFolder | Out-Null }
+    return Join-Path $lockFolder ("{0}.lock" -f $Serial)
+}
+
+function New-DeviceLock {
+    param([Parameter(Mandatory)][string]$Serial)
+    $lockPath = Get-LockFilePath -Serial $Serial
+    if (Test-Path $lockPath) {
+        Write-Log -Message ('Device {0} appears locked; proceeding without exclusive lock but will avoid destructive writes.' -f $Serial) -Level 'WARN'
+        return $false
+    }
+    "{0}|{1}" -f (Get-Date).ToString('o'), $env:USERNAME | Set-Content -Path $lockPath -Encoding UTF8
+    return $true
+}
+
+function Remove-DeviceLock {
+    param([Parameter(Mandatory)][string]$Serial)
+    $lockPath = Get-LockFilePath -Serial $Serial
+    if (Test-Path $lockPath) { Remove-Item -Path $lockPath -Force }
+}
+
+# INPUT VALIDATION UTILITIES
+function Read-ValidatedInput {
+    param(
+        [Parameter(Mandatory)][string]$Prompt,
+        [string]$Default,
+        [ValidateSet('String', 'Int', 'Choice')][string]$Type = 'String',
+        [string[]]$Choices,
+        [switch]$AllowEmpty
+    )
+    while ($true) {
+        # Do not append colon here; Read-Host will add ':' automatically
+        $renderPrompt = if ($Default) { ('{0} (default: {1})' -f $Prompt, $Default) } else { ('{0}' -f $Prompt) }
+        $response = Read-Host -Prompt $renderPrompt
+        if ([string]::IsNullOrWhiteSpace($response)) { $response = $Default }
+        if (-not $response -and -not $AllowEmpty) { Write-Host 'Input cannot be empty.'; continue }
+        switch ($Type) {
+            'Int' {
+                if (-not [int]::TryParse($response, [ref]$null)) { Write-Host 'Please enter a valid number.'; continue }
+            }
+            'Choice' {
+                if ($Choices -and -not ($Choices | ForEach-Object { $_.ToLower() } | Where-Object { $_ -eq $response.ToLower() })) { Write-Host ('Please choose one of: {0}' -f ($Choices -join ', ')); continue }
+            }
+        }
+        return $response
+    }
+}
+
+function Select-Site {
+    param([string]$CurrentSiteCode)
+    Write-Host 'Select site:'
+    for ($i = 0; $i -lt $Script:Sites.Count; $i++) {
+        $s = $Script:Sites[$i]
+        $marker = if ($s.Code -eq $CurrentSiteCode) { '*' } else { ' ' }
+        Write-Host ('{0} [{1}] {2} {3}' -f ($i + 1), $s.Code, $s.Name, $marker)
+    }
+    $choice = Read-ValidatedInput -Prompt 'Enter number of site' -Type 'Int'
+    $index = [int]$choice - 1
+    if ($index -lt 0 -or $index -ge $Script:Sites.Count) { Write-Host 'Invalid site selection.'; return $CurrentSiteCode }
+    return $Script:Sites[$index].Code
+}
+
+function Show-MainMenu {
+    param([string]$CurrentSiteCode)
+    $siteObj = $Script:Sites | Where-Object { $_.Code -eq $CurrentSiteCode }
+    $siteDisplay = if ($siteObj) { ('{0} - {1}' -f $siteObj.Code, $siteObj.Name) } else { 'Not Set' }
+    Write-Host ''
+    Write-Host ('Current Site: {0}' -f $siteDisplay)
+    Write-Host '================ MAIN MENU ================'
+    Write-Host '1. Start work on a new device'
+    Write-Host '2. Autopilot the device'
+    Write-Host "3. What's outstanding for a device"
+    Write-Host '4. Maintain my device list'
+    Write-Host '5. My stats and progress'
+    Write-Host '6. Enhancements & questions'
+    Write-Host '7. Change current site'
+    Write-Host '8. Build bench view'
+    Write-Host '0. Exit'
+    Write-Host '==========================================='
+    return Read-ValidatedInput -Prompt 'Choose an option' -Default '0'
+}
+
+# STUB FUNCTIONS WITH PERMISSION NOTES
+function Start-NewDeviceWorkflow {
+    <#
+		.SYNOPSIS
+			Begin tracking a new device (metadata capture, tag assignment, optional group membership).
+		.NOTES
+			Required future permissions: DeviceManagementServiceConfig.ReadWrite.All, Device.ReadWrite.All, Group.ReadWrite.All.
+			Steps:
+			  1. Confirm / change current site.
+			  2. Capture Serial & Config Item (barcode scanner friendly).
+			  3. Query Autopilot devices by serial (Graph).
+			  4. Retrieve/Store Entra device ID.
+			  5. Confirm or set Group Tag.
+			  6. Add device to support group(s) if enabled.
+			  7. Optionally delete stale Autopilot record before re-import.
+	#>
+    param([string]$CurrentSiteCode, [ref]$Records)
+    $siteCode = $CurrentSiteCode
+    $confirm = Read-ValidatedInput -Prompt ('Working at site {0}. Change? (Y/N)' -f $siteCode) -Default 'N'
+    if ($confirm.ToUpper() -eq 'Y') { $siteCode = Select-Site -CurrentSiteCode $siteCode }
+
+    while ($true) {
+        $serial = Read-ValidatedInput -Prompt ('Enter {0}' -f $Script:Config.Nomenclature.Serial)
+        $configItem = Read-ValidatedInput -Prompt ('Enter {0}' -f $Script:Config.Nomenclature.ConfigItem)
+        $deviceType = Select-DeviceType -Default $Script:DeviceTypes[0]
+        # Placeholder: Graph lookup for Autopilot + Entra device ID
+        $entraId = [guid]::NewGuid().Guid  # Temporary stand-in
+        # Enforce Group Tag pattern (SITECODE-Devicetype, preserve case); no override permitted
+        $expectedTag = ('{0}-{1}' -f $siteCode, ($deviceType -replace '\s', ''))
+        Write-Host ''
+        Write-Host 'Please confirm the details:'
+        Write-Host ('  {0}: {1}' -f $Script:Config.Nomenclature.Serial, $serial)
+        Write-Host ('  {0}: {1}' -f $Script:Config.Nomenclature.ConfigItem, $configItem)
+        Write-Host ('  {0}: {1}' -f $Script:Config.Nomenclature.Site, $siteCode)
+        Write-Host ('  {0}: {1}' -f $Script:Config.Nomenclature.DeviceType, $deviceType)
+        Write-Host ('  {0}: {1}' -f $Script:Config.Nomenclature.GroupTag, $expectedTag)
+        $proceed = Read-ValidatedInput -Prompt 'Proceed with these details? (Y/N)' -Default 'Y'
+        if ($proceed.ToUpper() -eq 'Y') {
+            $record = [AutopilotDeviceRecord]::new()
+            $record.Serial = $serial
+            $record.ConfigItem = $configItem
+            $record.SiteCode = $siteCode
+            $record.DeviceType = $deviceType
+            $record.EntraDeviceId = $entraId
+            $record.GroupTag = $expectedTag
+            $record.Status = 'new'
+            $record.StartedAt = Get-Date
+            $record.StartedBy = $env:USERNAME
+            $record.LastUpdatedAt = $record.StartedAt
+            $record.LastUpdatedBy = $record.StartedBy
+            $record.Steps = @{}
+            Add-DeviceRecord -Records $Records -Record $record
+            Write-UserDeviceRecords -Records $Records.Value
+            Write-Log -Message ('Added new device Serial={0} CI={1} Site={2} DeviceType={3}' -f $serial, $configItem, $siteCode, $deviceType) -Level 'INFO'
+            break
+        }
+        else {
+            Write-Host "Let's correct the details. You will be re-prompted."
+        }
+    }
+    return $siteCode
+}
+
+function Invoke-AutopilotSequence {
+    <#
+		.SYNOPSIS
+			Perform Autopilot sequence steps for a device.
+		.NOTES
+			Future endpoints: managedDevices sync, device user assignment, group membership checks, detectedApps.
+			Permissions: DeviceManagementManagedDevices.ReadWrite.All, Group.Read.All, User.Read.All.
+	#>
+    param([ref]$Records)
+    $device = Select-DeviceFromRecords -Records $Records -Purpose 'autopilot'
+    if (-not $device) { Write-Host 'Returning to main menu...'; return }
+    Write-Host 'Autopilot Sub-Menu (manifest-driven)'
+    foreach ($step in $Script:StepManifest) { if ($step.Enabled) { Write-Host ("{0}. {1}" -f $step.Id, $step.DisplayName) } }
+    Write-Host 'R. Return (0 exits)'
+    $opt = Read-ValidatedInput -Prompt 'Choose option' -Default 'R'
+    if ($opt -ne 'R' -and $opt -ne '0') {
+        $sel = $Script:StepManifest | Where-Object { $_.Id -eq $opt }
+        if ($sel) {
+            $device.Steps[$opt] = @{ Success = $true; Timestamp = Get-Date; Notes = ('Stub: {0}' -f $sel.DisplayName) }
+            Write-Log -Message ('Recorded step {0} ({1}) for Serial={2}' -f $opt, $sel.DisplayName, $device.Serial) -Level 'INFO'
+        }
+        else { Write-Host 'Invalid step selection.' }
+    }
+    $device.LastUpdatedAt = Get-Date
+    $device.LastUpdatedBy = $env:USERNAME
+    Write-UserDeviceRecords -Records $Records.Value  # Save updated records after step selection
+    Write-Log -Message ('Recorded step {0} for Serial={1}' -f $opt, $device.Serial) -Level 'INFO'
+}
+
+function Get-DeviceOutstanding {
+    <# .SYNOPSIS Display outstanding steps for a device. #>
+    param([ref]$Records)
+    $device = Select-DeviceFromRecords -Records $Records -Purpose 'outstanding'
+    if (-not $device) { Write-Host 'Returning to main menu...'; return }
+    Write-Host ('Device Serial={0} CI={1} Status={2}' -f $device.Serial, $device.ConfigItem, $device.Status)
+    $expectedSteps = ($Script:StepManifest | Where-Object { $_.Enabled } | ForEach-Object { $_.Id })
+    $completed = $device.Steps.Keys
+    $outstanding = $expectedSteps | Where-Object { $completed -notcontains $_ }
+    Write-Host ('Completed Steps: {0}' -f ($completed -join ', '))
+    Write-Host ('Outstanding Steps: {0}' -f ($outstanding -join ', '))
+}
+
+function Update-DeviceStatus {
+    <# .SYNOPSIS Update device status (new|in-progress|completed|removed). #>
+    param([ref]$Records)
+    $device = Select-DeviceFromRecords -Records $Records -Purpose 'update status'
+    if (-not $device) { Write-Host 'Returning to main menu...'; return }
+    $status = Read-ValidatedInput -Prompt 'Enter status (new,in-progress,completed,removed)' -Type 'Choice' -Choices @('new', 'in-progress', 'completed', 'removed') -Default $device.Status
+    $device.Status = $status
+    if ($status -eq 'completed') { $device.CompletedAt = Get-Date; $device.CompletedBy = $env:USERNAME }
+    $device.LastUpdatedAt = Get-Date; $device.LastUpdatedBy = $env:USERNAME
+    Write-UserDeviceRecords -Records $Records.Value
+    Write-Log -Message ('Updated status {0} for Serial={1}' -f $status, $device.Serial) -Level 'INFO'
+}
+
+function Get-UserStats {
+    <# .SYNOPSIS Show per-user stats as tables (overall and by site), newest date first. #>
+    param([ref]$Records)
+    $recordsLocal = $Records.Value
+    if (-not $recordsLocal -or $recordsLocal.Count -eq 0) { Write-Host 'No records to display.'; return }
+    $deviceTypes = $Script:DeviceTypes
+    function Show-StatsTable {
+        param([object[]]$Rows, [string]$Title)
+        Write-Host ('--- {0} ---' -f $Title)
+        $header = ('| {0,-10} | {1,-7} | {2,-7} | {3,-7} | {4,-7} | {5,-7} |' -f 'Date', 'Desktop', 'Laptop', 'WOW', 'NUC', 'Total')
+        $rule = '-' * $header.Length
+        Write-Host $header
+        Write-Host $rule
+        foreach ($r in $Rows) {
+            Write-Host ('| {0,-10} | {1,-7} | {2,-7} | {3,-7} | {4,-7} | {5,-7} |' -f $r.Date, $r.Desktop, $r.Laptop, $r.WOW, $r.NUC, $r.Total)
+        }
+        Write-Host $rule
+        $totDesktop = ($Rows | Measure-Object -Property Desktop -Sum).Sum
+        $totLaptop = ($Rows | Measure-Object -Property Laptop -Sum).Sum
+        $totWOW = ($Rows | Measure-Object -Property WOW -Sum).Sum
+        $totNUC = ($Rows | Measure-Object -Property NUC -Sum).Sum
+        $totAll = ($Rows | Measure-Object -Property Total -Sum).Sum
+        Write-Host ('| {0,-10} | {1,-7} | {2,-7} | {3,-7} | {4,-7} | {5,-7} |' -f 'Total', $totDesktop, $totLaptop, $totWOW, $totNUC, $totAll)
+        Write-Host ''
+    }
+    # Group by date
+    $byDate = $recordsLocal | Group-Object { $_.StartedAt.ToString('d/M/yyyy') }
+    $tableRows = @()
+    foreach ($g in $byDate) {
+        $date = $g.Name
+        $counts = @{ Desktop = 0; Laptop = 0; WOW = 0; NUC = 0 }
+        foreach ($rec in $g.Group) { if ($counts.ContainsKey($rec.DeviceType)) { $counts[$rec.DeviceType]++ } }
+        $total = $counts['Desktop'] + $counts['Laptop'] + $counts['WOW'] + $counts['NUC']
+        $tableRows += [pscustomobject]@{ Date = $date; Desktop = $counts['Desktop']; Laptop = $counts['Laptop']; WOW = $counts['WOW']; NUC = $counts['NUC']; Total = $total }
+    }
+    $tableRows = $tableRows | Sort-Object { [datetime]::ParseExact($_.Date, 'd/M/yyyy', $null) } -Descending
+    Show-StatsTable -Rows $tableRows -Title 'Overall'
+    # By site
+    $bySite = $recordsLocal | Group-Object -Property SiteCode
+    foreach ($site in $bySite) {
+        $siteRows = @()
+        $byDateSite = $site.Group | Group-Object { $_.StartedAt.ToString('d/M/yyyy') }
+        foreach ($gd in $byDateSite) {
+            $date = $gd.Name
+            $counts = @{ Desktop = 0; Laptop = 0; WOW = 0; NUC = 0 }
+            foreach ($rec in $gd.Group) { if ($counts.ContainsKey($rec.DeviceType)) { $counts[$rec.DeviceType]++ } }
+            $total = $counts['Desktop'] + $counts['Laptop'] + $counts['WOW'] + $counts['NUC']
+            $siteRows += [pscustomobject]@{ Date = $date; Desktop = $counts['Desktop']; Laptop = $counts['Laptop']; WOW = $counts['WOW']; NUC = $counts['NUC']; Total = $total }
+        }
+        $siteRows = $siteRows | Sort-Object { [datetime]::ParseExact($_.Date, 'd/M/yyyy', $null) } -Descending
+        Show-StatsTable -Rows $siteRows -Title ('By site: {0}' -f $site.Name)
+    }
+}
+
+function Show-EnhancementsQuestions {
+    <# .SYNOPSIS Display potential enhancements & ask clarifying questions. #>
+    Write-Host '--- Potential Enhancements ---'
+    foreach ($e in $Script:EnhancementManifest) {
+        Write-Host ("{0}. {1} [{2}]" -f $e.Id, $e.Title, $e.Status)
+        if ($e.Description) { Write-Host ('    - {0}' -f $e.Description) }
+    }
+    Write-Host ''
+    Write-Host '--- Clarifying Questions ---'
+    Write-Host 'A. Should manager validation exclude certain role titles?' 
+    Write-Host 'B. Required retention period for device build history?' 
+    Write-Host 'C. Need encryption at rest for JSON data files?' 
+    Write-Host 'D. External CMDB column mapping examples?' 
+    Write-Host 'E. Preferred approach for roll-up (central share vs Graph storage)?'
+}
+
+# ===== Build Bench (scaffold) =====
+$Script:BuildBench = [ordered]@{ Positions = @(); Active = $false; SiteCode = $null; DeviceType = $null; Faults = @() }
+
+function Get-BuildBenchStatePath {
+    $root = $env:PowerShellScriptingNewRoot
+    $dataFolder = Join-Path $root $Script:Config.DataFolderRelative
+    if (-not (Test-Path $dataFolder)) { New-Item -ItemType Directory -Path $dataFolder | Out-Null }
+    return Join-Path $dataFolder ("build-bench-{0}.json" -f $env:USERNAME)
+}
+
+function Save-BuildBenchState {
+    try { $Script:BuildBench | ConvertTo-Json -Depth 6 | Set-Content -Path (Get-BuildBenchStatePath) -Encoding UTF8 } catch { Write-Log -Message ('Failed to save build bench: {0}' -f $_.Exception.Message) -Level 'ERROR' }
+}
+
+function Get-BuildBenchState {
+    $path = Get-BuildBenchStatePath
+    if (Test-Path $path) {
+        try { $state = Get-Content -Raw -Path $path | ConvertFrom-Json; return $state } catch { return $null }
+    }
+    return $null
+}
+
+function New-BuildBench {
+    param([int]$Positions)
+    if ($Positions -lt 1 -or $Positions -gt 50) { Write-Host 'Positions must be between 1 and 50.'; return }
+    $Script:BuildBench.Positions = @(); for ($i = 1; $i -le $Positions; $i++) { $Script:BuildBench.Positions += [ordered]@{ Index = $i; Serial = $null; ConfigItem = $null } }
+    $Script:BuildBench.Active = $true
+    Write-Log -Message ('Build bench initialised with {0} positions.' -f $Positions) -Level 'INFO'
+}
+
+function Get-NextStepId { param([AutopilotDeviceRecord]$Device) $enabled = $Script:StepManifest | Where-Object { $_.Enabled } | ForEach-Object { $_.Id }; foreach ($sid in $enabled) { if (-not $Device.Steps.ContainsKey($sid)) { return $sid } } return $null }
+
+function Add-DeviceToBenchPosition {
+    param([int]$Position, [string]$Serial, [string]$ConfigItem, [ref]$Records, [string]$SiteCode, [string]$DeviceType)
+    $slot = $Script:BuildBench.Positions | Where-Object { $_.Index -eq $Position }; if (-not $slot) { Write-Host 'Invalid position.'; return }
+    $existing = $Records.Value | Where-Object { $_.Serial -eq $Serial }
+    if (-not $existing) {
+        $entraId = [guid]::NewGuid().Guid
+        $expectedTag = ('{0}-{1}' -f $SiteCode, ($DeviceType -replace '\s', ''))
+        $rec = [AutopilotDeviceRecord]::new(); $rec.Serial = $Serial; $rec.ConfigItem = $ConfigItem; $rec.SiteCode = $SiteCode; $rec.DeviceType = $DeviceType; $rec.EntraDeviceId = $entraId; $rec.GroupTag = $expectedTag; $rec.Status = 'new'; $rec.StartedAt = Get-Date; $rec.StartedBy = $env:USERNAME; $rec.LastUpdatedAt = $rec.StartedAt; $rec.LastUpdatedBy = $rec.StartedBy; $rec.Steps = @{}
+        Add-DeviceRecord -Records $Records -Record $rec
+    }
+    $slot.Serial = $Serial; $slot.ConfigItem = $ConfigItem
+    Write-UserDeviceRecords -Records $Records.Value
+    Save-BuildBenchState
+}
+
+function Remove-DeviceFromBenchPosition { param([int]$Position) $slot = $Script:BuildBench.Positions | Where-Object { $_.Index -eq $Position }; if (-not $slot) { Write-Host 'Invalid position.'; return }; $slot.Serial = $null; $slot.ConfigItem = $null }
+
+# Ensure that any devices shown in the bench positions exist in the per-user records
+function Sync-BenchRecords {
+    param([ref]$Records)
+    if (-not $Script:BuildBench -or -not $Script:BuildBench.Positions) { return }
+    $site = $Script:BuildBench.SiteCode
+    $dtype = $Script:BuildBench.DeviceType
+    foreach ($slot in $Script:BuildBench.Positions) {
+        if (-not $slot.Serial) { continue }
+        $existing = $Records.Value | Where-Object { $_.Serial -eq $slot.Serial }
+        if (-not $existing) {
+            $expectedTag = if ($site -and $dtype) { ('{0}-{1}' -f $site, ($dtype -replace '\s', '')) } else { $null }
+            $rec = [AutopilotDeviceRecord]::new();
+            $rec.Serial = $slot.Serial
+            $rec.ConfigItem = $slot.ConfigItem
+            $rec.SiteCode = $site
+            $rec.DeviceType = $dtype
+            $rec.GroupTag = $expectedTag
+            $rec.Status = 'new'
+            $rec.StartedAt = Get-Date
+            $rec.StartedBy = $env:USERNAME
+            $rec.LastUpdatedAt = $rec.StartedAt
+            $rec.LastUpdatedBy = $rec.StartedBy
+            $rec.Steps = @{}
+            Add-DeviceRecord -Records $Records -Record $rec
+        }
+    }
+    Write-UserDeviceRecords -Records $Records.Value
+}
+
+function Show-BuildBenchTable {
+    param([ref]$Records)
+    # Column widths to preserve alignment; ellipsise long content
+    $labelWidth = 10
+    $colWidth = 14
+    function FormatCell([string]$text, [int]$width) {
+        if ($null -eq $text) { $text = '' }
+        $t = [string]$text
+        if ($t.Length -gt $width) { $t = $t.Substring(0, $width - 1) + '…' }
+        return $t.PadRight($width)
+    }
+    function CenterCell([string]$text, [int]$width) {
+        if ($null -eq $text) { $text = '' }
+        $t = [string]$text
+        if ($t.Length -gt $width) { $t = $t.Substring(0, $width - 1) + '…' }
+        $padTotal = $width - $t.Length
+        if ($padTotal -le 0) { return $t }
+        $left = [math]::Floor($padTotal / 2)
+        $right = $padTotal - $left
+        return ('{0}{1}{2}' -f (' ' * $left), $t, (' ' * $right))
+    }
+    function BuildRow([string]$label, [string[]]$values, [bool]$centerValues) {
+        $row = '|' + ' ' + ($label.PadRight($labelWidth)) + ' '
+        foreach ($v in $values) {
+            $cellText = if ($centerValues) { CenterCell -text $v -width $colWidth } else { FormatCell -text $v -width $colWidth }
+            $row += ('| {0} ' -f $cellText)
+        }
+        $row += '|'
+        return $row
+    }
+    # Determine how many columns fit the current window
+    $winWidth = 120
+    try { if ($Host -and $Host.UI -and $Host.UI.RawUI) { $winWidth = [math]::Max(50, $Host.UI.RawUI.WindowSize.Width) } } catch { $winWidth = 120 }
+    $baseLen = $labelWidth + 3 + 1  # label plus separators and final '|'
+    $perCol = $colWidth + 3         # "| {col} " per column
+    $maxCols = [math]::Floor(($winWidth - $baseLen) / $perCol)
+    if ($maxCols -lt 1) { $maxCols = 1 }
+    $colsPerRow = [math]::Min(8, $maxCols)
+    $positions = $Script:BuildBench.Positions
+    $chunks = @()
+    for ($i = 0; $i -lt $positions.Count; $i += $colsPerRow) { $chunks += , (@($positions[$i..([Math]::Min($i + $colsPerRow - 1, $positions.Count - 1))])) }
+    foreach ($chunk in $chunks) {
+        $posLabels = $chunk | ForEach-Object { $_.Index.ToString() }
+        $lineSample = BuildRow -label 'Position' -values $posLabels -centerValues $true
+        $rule = '-' * $lineSample.Length
+        Write-Host $rule
+        Write-Host $lineSample
+        Write-Host $rule
+        $serialVals = $chunk | ForEach-Object { if ($_.Serial) { $_.Serial } else { '' } }
+        Write-Host (BuildRow -label 'Serial' -values $serialVals -centerValues $false)
+        $ciVals = $chunk | ForEach-Object { if ($_.ConfigItem) { $_.ConfigItem } else { '' } }
+        Write-Host (BuildRow -label 'CI' -values $ciVals -centerValues $false)
+        Write-Host $rule
+        $currentVals = @()
+        foreach ($slot in $chunk) {
+            $val = ''
+            if ($slot.Serial) {
+                $rec = $Records.Value | Where-Object { $_.Serial -eq $slot.Serial }
+                if ($rec -and $rec.Steps.Keys.Count -gt 0) { $val = ($rec.Steps.Keys | Select-Object -Last 1) } else { $val = '' }
+            }
+            $currentVals += $val
+        }
+        Write-Host (BuildRow -label 'Current' -values $currentVals -centerValues $false)
+        $nextVals = @()
+        foreach ($slot in $chunk) {
+            $val = ''
+            if ($slot.Serial) {
+                $rec = $Records.Value | Where-Object { $_.Serial -eq $slot.Serial }
+                if ($rec) { $val = Get-NextStepId -Device $rec }
+            }
+            $nextVals += $val
+        }
+        Write-Host (BuildRow -label 'Next' -values $nextVals -centerValues $false)
+        Write-Host $rule
+        Write-Host ''
+    }
+}
+
+function Show-BuildBenchView {
+    param([ref]$Records)
+    if (-not $Script:BuildBench.Active) { Write-Host 'Build bench not initialised.'; return }
+    function Show-BenchScreen {
+        Clear-Host
+        # Determine window width for header centring and full-width background
+        $winWidth = 120
+        try { if ($Host -and $Host.UI -and $Host.UI.RawUI) { $winWidth = [math]::Max(50, $Host.UI.RawUI.WindowSize.Width) } } catch { $winWidth = 120 }
+        $title = 'BUILD BENCH MANAGER'
+        $padTotal = $winWidth - $title.Length
+        if ($padTotal -lt 0) { $padTotal = 0 }
+        $left = [math]::Floor($padTotal / 2)
+        $right = $padTotal - $left
+        $paddedTitle = ('{0}{1}{2}' -f (' ' * $left), $title, (' ' * $right))
+        Write-Host $paddedTitle -BackgroundColor DarkBlue -ForegroundColor White
+        Write-Host ''
+        Show-BuildBenchTable -Records $Records
+        if ($Script:BuildBench.Faults -and $Script:BuildBench.Faults.Count -gt 0) {
+            Write-Host 'Current faults:'
+            foreach ($f in $Script:BuildBench.Faults) { Write-Host $f }
+            Write-Host ''
+        }
+        Write-Host 'Actions:'
+        Write-Host '[I]nduct new device   [S]tart Next Step for a device   [V]iew all actions for a device'
+        Write-Host '[D]ispatch and finish a device   [R]emove from position   [M]ove device   [E]xit Build Bench view'
+        Write-Host ''
+        # Hints for open positions
+        $open = $Script:BuildBench.Positions | Where-Object { -not $_.Serial }
+        $nextOpen = if ($open -and $open.Count -gt 0) { $open[0].Index } else { 'None' }
+        $openList = if ($open -and $open.Count -gt 0) { ($open | Select-Object -ExpandProperty Index) } else { @() }
+        $openPreview = if ($openList.Count -gt 0) { ($openList | Select-Object -First 10) -join ', ' } else { 'None' }
+        $moreCount = if ($openList.Count -gt 10) { $openList.Count - 10 } else { 0 }
+        Write-Host ('Hint: Next open position: {0}' -f $nextOpen)
+        if ($moreCount -gt 0) {
+            Write-Host ('Open positions: {0} (and {1} more)' -f $openPreview, $moreCount)
+        }
+        else {
+            Write-Host ('Open positions: {0}' -f $openPreview)
+        }
+        Write-Host 'You can enter a position number, or scan/paste a device Serial/CI at any prompt.'
+    }
+    Show-BenchScreen
+    while ($true) {
+        $cmd = Read-ValidatedInput -Prompt 'Command' -AllowEmpty -Default 'E'
+        $u = if ([string]::IsNullOrWhiteSpace($cmd)) { 'E' } else { $cmd.Trim().ToUpper() }
+        switch ($u) {
+            'E' { Save-BuildBenchState; return }
+            'I' {
+                Clear-Host; Write-Host 'INDUCT NEW DEVICE'
+                $max = ($Script:BuildBench.Positions | Measure-Object).Count
+                $openSlots = $Script:BuildBench.Positions | Where-Object { -not $_.Serial }
+                if (-not $openSlots -or $openSlots.Count -eq 0) {
+                    Write-Host 'All bench positions are occupied. Remove or dispatch a device, then try again.'
+                    Show-BenchScreen
+                    continue
+                }
+                $defaultPos = $openSlots[0].Index
+                while ($true) {
+                    $prompt = ('Position number (1-{0}, 0 to cancel)' -f $max)
+                    $ans = Read-ValidatedInput -Prompt $prompt -AllowEmpty -Default $defaultPos -Type 'Int'
+                    $posNum = [int]$ans
+                    if ($posNum -eq 0) { Show-BenchScreen; break }
+                    if ($posNum -lt 1 -or $posNum -gt $max) { Write-Host ('Invalid position. Choose between 1 and {0}.' -f $max); continue }
+                    $slot = $Script:BuildBench.Positions | Where-Object { $_.Index -eq $posNum }
+                    if ($slot -and $slot.Serial) { Write-Host ('Position {0} is occupied. Choose an empty position.' -f $posNum); continue }
+
+                    $useCurrent = Read-ValidatedInput -Prompt ('Use current site {0}? (Y/N)' -f $Script:BuildBench.SiteCode) -Default 'Y'
+                    $site = if ($useCurrent.ToUpper() -eq 'Y') { $Script:BuildBench.SiteCode } else { Select-Site -CurrentSiteCode $Script:BuildBench.SiteCode }
+                    $dtype = Select-DeviceType -Default $Script:BuildBench.DeviceType
+                    $serial = Read-ValidatedInput -Prompt ('Enter {0}' -f $Script:Config.Nomenclature.Serial)
+                    $ci = Read-ValidatedInput -Prompt ('Enter {0}' -f $Script:Config.Nomenclature.ConfigItem)
+                    Add-DeviceToBenchPosition -Position $posNum -Serial $serial -ConfigItem $ci -Records $Records -SiteCode $site -DeviceType $dtype
+                    Show-BenchScreen
+                    break
+                }
+            }
+            'R' {
+                # Remove a device by position or identifier
+                $hasAny = (($Script:BuildBench.Positions | Where-Object { $_.Serial }) | Measure-Object).Count -gt 0
+                if (-not $hasAny) { Write-Host 'No devices are currently on the bench.'; Show-BenchScreen; continue }
+                $max = ($Script:BuildBench.Positions | Measure-Object).Count
+                $occupied = $Script:BuildBench.Positions | Where-Object { $_.Serial }
+                $defaultPos = if ($occupied -and $occupied.Count -gt 0) { $occupied[0].Index } else { 1 }
+                $ans = Read-ValidatedInput -Prompt ('Position number (1-{0}) or Serial/CI (0 to cancel)' -f $max) -AllowEmpty -Default $defaultPos
+                if ($ans -eq '0') { Show-BenchScreen; continue }
+                $posNum = $null
+                if ([int]::TryParse($ans, [ref]$posNum) -and $posNum -ge 1 -and $posNum -le $max) { $slot = $Script:BuildBench.Positions | Where-Object { $_.Index -eq [int]$posNum } }
+                else { $slot = $Script:BuildBench.Positions | Where-Object { $_.Serial -eq $ans -or $_.ConfigItem -eq $ans } }
+                if (-not $slot -or -not $slot.Serial) { Write-Host 'No device at that position or identifier.'; continue }
+                Remove-DeviceFromBenchPosition -Position ([int]$slot.Index)
+                Save-BuildBenchState
+                Show-BenchScreen
+            }
+            'S' {
+                # Action next step for a device by position or identifier
+                $max = ($Script:BuildBench.Positions | Measure-Object).Count
+                $ans = Read-ValidatedInput -Prompt ('Position number (1-{0}) or Serial/CI (0 to cancel)' -f $max)
+                if ($ans -eq '0') { Show-BenchScreen; continue }
+                $posNum = $null
+                if ([int]::TryParse($ans, [ref]$posNum) -and $posNum -ge 1 -and $posNum -le $max) { $slot = $Script:BuildBench.Positions | Where-Object { $_.Index -eq [int]$posNum } }
+                else { $slot = $Script:BuildBench.Positions | Where-Object { $_.Serial -eq $ans -or $_.ConfigItem -eq $ans } }
+                if (-not $slot -or -not $slot.Serial) { Write-Host 'No device at that position or identifier.'; continue }
+                $rec = $Records.Value | Where-Object { $_.Serial -eq $slot.Serial }
+                if (-not $rec) {
+                    $expectedTag = if ($Script:BuildBench.SiteCode -and $Script:BuildBench.DeviceType) { ('{0}-{1}' -f $Script:BuildBench.SiteCode, ($Script:BuildBench.DeviceType -replace '\s', '')) } else { $null }
+                    $rec = [AutopilotDeviceRecord]::new(); $rec.Serial = $slot.Serial; $rec.ConfigItem = $slot.ConfigItem; $rec.SiteCode = $Script:BuildBench.SiteCode; $rec.DeviceType = $Script:BuildBench.DeviceType; $rec.GroupTag = $expectedTag; $rec.Status = 'new'; $rec.StartedAt = Get-Date; $rec.StartedBy = $env:USERNAME; $rec.LastUpdatedAt = $rec.StartedAt; $rec.LastUpdatedBy = $rec.StartedBy; $rec.Steps = @{}
+                    Add-DeviceRecord -Records $Records -Record $rec
+                    Write-UserDeviceRecords -Records $Records.Value
+                }
+                $next = Get-NextStepId -Device $rec
+                if ($next) { $rec.Steps[$next] = @{ Success = $true; Timestamp = Get-Date; Notes = 'Bench quick-step' }; $rec.LastUpdatedAt = Get-Date; $rec.LastUpdatedBy = $env:USERNAME; Write-UserDeviceRecords -Records $Records.Value; Show-BenchScreen }
+                else { Write-Host 'All steps completed.' }
+            }
+            'D' {
+                # Dispatch and finish a device by position or identifier
+                $max = ($Script:BuildBench.Positions | Measure-Object).Count
+                $ans = Read-ValidatedInput -Prompt ('Position number (1-{0}) or Serial/CI (0 to cancel)' -f $max)
+                if ($ans -eq '0') { Show-BenchScreen; continue }
+                $posNum = $null
+                if ([int]::TryParse($ans, [ref]$posNum) -and $posNum -ge 1 -and $posNum -le $max) { $slot = $Script:BuildBench.Positions | Where-Object { $_.Index -eq [int]$posNum } }
+                else { $slot = $Script:BuildBench.Positions | Where-Object { $_.Serial -eq $ans -or $_.ConfigItem -eq $ans } }
+                if (-not $slot -or -not $slot.Serial) { Write-Host 'No device at that position or identifier.'; continue }
+                $rec = $Records.Value | Where-Object { $_.Serial -eq $slot.Serial }
+                if (-not $rec) {
+                    $expectedTag = if ($Script:BuildBench.SiteCode -and $Script:BuildBench.DeviceType) { ('{0}-{1}' -f $Script:BuildBench.SiteCode, ($Script:BuildBench.DeviceType -replace '\s', '')) } else { $null }
+                    $rec = [AutopilotDeviceRecord]::new(); $rec.Serial = $slot.Serial; $rec.ConfigItem = $slot.ConfigItem; $rec.SiteCode = $Script:BuildBench.SiteCode; $rec.DeviceType = $Script:BuildBench.DeviceType; $rec.GroupTag = $expectedTag; $rec.Status = 'new'; $rec.StartedAt = Get-Date; $rec.StartedBy = $env:USERNAME; $rec.LastUpdatedAt = $rec.StartedAt; $rec.LastUpdatedBy = $rec.StartedBy; $rec.Steps = @{}
+                    Add-DeviceRecord -Records $Records -Record $rec
+                }
+                if ($rec) { $rec.Status = 'completed'; $rec.CompletedAt = Get-Date; $rec.CompletedBy = $env:USERNAME; $rec.LastUpdatedAt = Get-Date; $rec.LastUpdatedBy = $env:USERNAME; Write-UserDeviceRecords -Records $Records.Value }
+                Remove-DeviceFromBenchPosition -Position ([int]$slot.Index)
+                Save-BuildBenchState
+                Show-BenchScreen
+            }
+            'V' {
+                # View a device details by position or identifier
+                $max = ($Script:BuildBench.Positions | Measure-Object).Count
+                $ans = Read-ValidatedInput -Prompt ('Position number (1-{0}) or Serial/CI (0 to cancel)' -f $max)
+                if ($ans -eq '0') { Show-BenchScreen; continue }
+                $posNum = $null
+                if ([int]::TryParse($ans, [ref]$posNum) -and $posNum -ge 1 -and $posNum -le $max) { $slot = $Script:BuildBench.Positions | Where-Object { $_.Index -eq [int]$posNum } }
+                else { $slot = $Script:BuildBench.Positions | Where-Object { $_.Serial -eq $ans -or $_.ConfigItem -eq $ans } }
+                if (-not $slot -or -not $slot.Serial) { Write-Host 'No device at that position or identifier.'; continue }
+                $rec = $Records.Value | Where-Object { $_.Serial -eq $slot.Serial }
+                if (-not $rec) {
+                    $expectedTag = if ($Script:BuildBench.SiteCode -and $Script:BuildBench.DeviceType) { ('{0}-{1}' -f $Script:BuildBench.SiteCode, ($Script:BuildBench.DeviceType -replace '\s', '')) } else { $null }
+                    $rec = [AutopilotDeviceRecord]::new(); $rec.Serial = $slot.Serial; $rec.ConfigItem = $slot.ConfigItem; $rec.SiteCode = $Script:BuildBench.SiteCode; $rec.DeviceType = $Script:BuildBench.DeviceType; $rec.GroupTag = $expectedTag; $rec.Status = 'new'; $rec.StartedAt = Get-Date; $rec.StartedBy = $env:USERNAME; $rec.LastUpdatedAt = $rec.StartedAt; $rec.LastUpdatedBy = $rec.StartedBy; $rec.Steps = @{}
+                    Add-DeviceRecord -Records $Records -Record $rec
+                    Write-UserDeviceRecords -Records $Records.Value
+                }
+                if ($rec) { Write-Host ('Serial={0} CI={1} Status={2} Steps=[{3}]' -f $rec.Serial, $rec.ConfigItem, $rec.Status, ($rec.Steps.Keys -join ', ')) }
+            }
+            'M' {
+                # Move device between positions; source can be pos/serial/ci, destination must be empty; default destination = next open
+                $hasAny = (($Script:BuildBench.Positions | Where-Object { $_.Serial }) | Measure-Object).Count -gt 0
+                if (-not $hasAny) { Write-Host 'No devices are currently on the bench.'; Show-BenchScreen; continue }
+                $max = ($Script:BuildBench.Positions | Measure-Object).Count
+                $srcAns = Read-ValidatedInput -Prompt ('Source position (1-{0}) or Serial/CI (0 to cancel)' -f $max)
+                if ($srcAns -eq '0') { Show-BenchScreen; continue }
+                $srcNum = $null
+                if ([int]::TryParse($srcAns, [ref]$srcNum) -and $srcNum -ge 1 -and $srcNum -le $max) { $srcSlot = $Script:BuildBench.Positions | Where-Object { $_.Index -eq [int]$srcNum } }
+                else { $srcSlot = $Script:BuildBench.Positions | Where-Object { $_.Serial -eq $srcAns -or $_.ConfigItem -eq $srcAns } }
+                if (-not $srcSlot -or -not $srcSlot.Serial) { Write-Host 'No device found at that source position or identifier.'; continue }
+
+                $openSlots = $Script:BuildBench.Positions | Where-Object { -not $_.Serial }
+                if (-not $openSlots -or $openSlots.Count -eq 0) { Write-Host 'There are no empty positions to move the device to.'; Show-BenchScreen; continue }
+                $defaultDest = $openSlots[0].Index
+                while ($true) {
+                    $destAns = Read-ValidatedInput -Prompt ('Destination position (1-{0}, 0 to cancel)' -f $max) -AllowEmpty -Default $defaultDest
+                    if ($destAns -eq '0') { Show-BenchScreen; break }
+                    $destNum = $null
+                    if (-not [int]::TryParse($destAns, [ref]$destNum) -or $destNum -lt 1 -or $destNum -gt $max) { Write-Host ('Invalid position. Choose between 1 and {0}.' -f $max); continue }
+                    $destSlot = $Script:BuildBench.Positions | Where-Object { $_.Index -eq [int]$destNum }
+                    if ($destSlot.Serial) { Write-Host ('Position {0} is occupied. Choose an empty position.' -f $destNum); continue }
+                    # Move
+                    $destSlot.Serial = $srcSlot.Serial; $destSlot.ConfigItem = $srcSlot.ConfigItem
+                    $srcSlot.Serial = $null; $srcSlot.ConfigItem = $null
+                    Save-BuildBenchState
+                    Show-BenchScreen
+                    break
+                }
+            }
+            default {
+                # Treat as Serial or CI scanned
+                $str = if ($cmd) { $cmd.Trim() } else { '' }
+                $rec = $Records.Value | Where-Object { $_.Serial -eq $str -or $_.ConfigItem -eq $str }
+                if ($rec) { Write-Host ('Scanned device Serial={0} CI={1} Status={2}' -f $rec.Serial, $rec.ConfigItem, $rec.Status) }
+                else { Write-Host 'Unknown command or device. Use I/S/V/D/R/E or scan a known Serial/CI.' }
+            }
+        }
+    }
+}
+
+# ===== Selection helpers =====
+function Select-DeviceFromRecords {
+    param([ref]$Records, [string]$Purpose)
+    $list = $Records.Value | Where-Object { $_.Status -ne 'removed' }
+    if (-not $list -or $list.Count -eq 0) { Write-Host 'No devices currently being worked on.'; return $null }
+    Write-Host ('Select a device to {0} (enter number, Serial, CI, or 0 to exit):' -f $Purpose)
+    $idx = 1
+    foreach ($d in $list) { Write-Host ('  {0}. Serial={1} CI={2} Status={3}' -f $idx, $d.Serial, $d.ConfigItem, $d.Status); $idx++ }
+    $sel = Read-ValidatedInput -Prompt 'Your selection (0 exits)'
+    if ($sel -eq '0') { return $null }
+    if ([int]::TryParse($sel, [ref]$null)) { $i = [int]$sel; if ($i -ge 1 -and $i -le $list.Count) { return $list[$i - 1] } }
+    $d2 = $list | Where-Object { $_.Serial -eq $sel -or $_.ConfigItem -eq $sel }
+    if ($d2) { return $d2 }
+    Write-Host 'No matching device'; return $null
+}
+
+function Select-DeviceType {
+    param([string]$Default)
+    # Compute unique hotkey letter for each type and present a concise chooser
+    $types = $Script:DeviceTypes
+    $hotkeys = @{}
+    foreach ($t in $types) {
+        $clean = ($t -replace '[^A-Za-z0-9]', '')
+        if ([string]::IsNullOrWhiteSpace($clean)) { continue }
+        $assigned = $false
+        for ($i = 0; $i -lt $clean.Length; $i++) {
+            $upper = $clean[$i].ToString().ToUpper()
+            if (-not ($hotkeys.Values | Where-Object { $_.Key -eq $upper })) {
+                $hotkeys[$t] = @{ Index = $i; Key = $upper }
+                $assigned = $true
+                break
+            }
+        }
+        if (-not $assigned) { $hotkeys[$t] = @{ Index = 0; Key = ($clean[0].ToString().ToUpper()) } }
+    }
+    Write-Host 'Select Device Type:'
+    $i = 1
+    foreach ($name in $types) {
+        $marker = if ($name -eq $Default) { '*' } else { ' ' }
+        $hk = $hotkeys[$name].Key
+        Write-Host ('  {0}. {1} (hotkey: {2}) {3}' -f $i, $name, $hk, $marker)
+        $i++
+    }
+    $ans = Read-ValidatedInput -Prompt 'Enter number, hotkey letter, or full name' -Default $Default
+    # Try number
+    $num = $null
+    if ([int]::TryParse($ans, [ref]$num)) {
+        if ($num -ge 1 -and $num -le $types.Count) { return $types[$num - 1] }
+    }
+    # Try hotkey
+    $match = $hotkeys.Keys | Where-Object { $hotkeys[$_].Key -eq $ans.ToUpper() }
+    if ($match) { return $match }
+    # Try exact name
+    $exact = $types | Where-Object { $_ -eq $ans }
+    if ($exact) { return $exact }
+    Write-Host 'Invalid selection; defaulting.'
+    return $Default
+}
+
+function Show-ReturnToMainMenu {
+    # Pause so the technician can read/copy output before returning
+    [void](Read-Host 'Press Enter to return to the main menu')
+    Clear-Host
+}
+
+function Show-ReturnToPreviousMenu {
+    # Generic pause helper for sub-menus that return to their caller
+    [void](Read-Host 'Press Enter to return to the previous menu')
+    Clear-Host
+}
+
+# INITIALISATION & MAIN LOOP
+$records = Get-UserDeviceRecords
+# Prompt for startup site selection (issue 1)
+$currentSiteCode = Select-Site -CurrentSiteCode $Script:Sites[0].Code
+Write-Log -Message 'If needing to run in PS7 and not already run within PS7, call a PS7 session and run the script there, before exiting back to the command line' -Level 'INFO'
+Write-Log -Message 'Check for and test presense of all required modules here' -Level 'INFO'
+Write-Log -Message 'If any required modules missing, start process to install and test installed here' -Level 'INFO'
+Write-Log -Message '* Authenticate user against Microsoft Graph API *' -Level 'INFO'
+Write-Log -Message 'If this function was written, a web browser window would be opened for the user to authenticate with their AC prefix account; followed by testing they have appropriate permission; and advising of any errors; before either quitting the script because they do not have sufficient permission or proceeding to the next step.' -Level 'INFO'
+Write-Log -Message 'Render authentication error messages here if any, and exit script if none or insufficient permission' -Level 'INFO'
+Write-Log -Message 'Indicate successful authentication and permission verification if indeed so and proceed' -Level 'INFO'
+Write-Log -Message 'Autopilot Express Framework Initialised' -Level 'INFO'
+
+while ($true) {
+    $option = Show-MainMenu -CurrentSiteCode $currentSiteCode
+    switch ($option) {
+        '1' { $currentSiteCode = Start-NewDeviceWorkflow -CurrentSiteCode $currentSiteCode -Records ([ref]$records); Show-ReturnToMainMenu }
+        '2' { Invoke-AutopilotSequence -Records ([ref]$records); Show-ReturnToMainMenu }
+        '3' { Get-DeviceOutstanding -Records ([ref]$records); Show-ReturnToMainMenu }
+        '4' { Update-DeviceStatus -Records ([ref]$records); Show-ReturnToMainMenu }
+        '5' { Get-UserStats -Records ([ref]$records); Show-ReturnToMainMenu }
+        '6' { Show-EnhancementsQuestions; Show-ReturnToMainMenu }
+        '7' { $currentSiteCode = Select-Site -CurrentSiteCode $currentSiteCode; Show-ReturnToMainMenu }
+        '8' {
+            if (-not $Script:BuildBench.Active) {
+                # Attempt to resume previous bench session
+                $prev = Get-BuildBenchState
+                if ($prev) {
+                    $resume = Read-ValidatedInput -Prompt 'Resume previous bench session? (Y/N)' -Default 'Y'
+                    if ($resume.ToUpper() -eq 'Y') { $Script:BuildBench = $prev; Sync-BenchRecords -Records ([ref]$records) }
+                }
+                if (-not $Script:BuildBench.Active) {
+                    $benchCount = Read-ValidatedInput -Prompt 'Number of bench positions' -Type 'Int'
+                    New-BuildBench -Positions ([int]$benchCount)
+                    $Script:BuildBench.SiteCode = $currentSiteCode
+                    $Script:BuildBench.DeviceType = Select-DeviceType -Default $Script:DeviceTypes[0]
+                    Sync-BenchRecords -Records ([ref]$records)
+                }
+            }
+            Sync-BenchRecords -Records ([ref]$records)
+            Show-BuildBenchView -Records ([ref]$records)
+            Show-ReturnToMainMenu
+        }
+        '0' { Write-Log -Message 'Exiting framework.' -Level 'INFO'; break }
+        default { Write-Host 'Invalid selection.' }
+    }
+    if ($option -eq '0') { break }
+}

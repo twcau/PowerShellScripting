@@ -1,0 +1,51 @@
+name: .NET Build & Analyzers (ScriptLauncher)
+
+on:
+    push:
+        branches: [main, master]
+    pull_request:
+        branches: [main, master]
+
+jobs:
+    build:
+        name: Build and Analyze
+        runs-on: windows-latest
+        defaults:
+            run:
+                shell: pwsh
+                working-directory: ScriptLauncher
+        env:
+            DOTNET_NOLOGO: true
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Setup .NET SDK
+              uses: actions/setup-dotnet@v4
+              with:
+                  dotnet-version: "10.0.x"
+
+            - name: Restore
+              run: |
+                  dotnet restore "ScriptLauncher.csproj"
+
+            - name: Build (warnings as errors)
+              run: |
+                  dotnet build "ScriptLauncher.csproj" -warnaserror -v minimal
+
+            - name: Analyzer sweep (diagnostic verbosity)
+              run: |
+                  dotnet format analyzers "ScriptLauncher.csproj" --verbosity diagnostic *>&1 | Tee-Object -FilePath "analyzers-diagnostics.log"
+
+            - name: Build diagnostics (verbose)
+              run: |
+                  dotnet build "ScriptLauncher.csproj" -warnaserror -v diag *>&1 | Tee-Object -FilePath "build-diagnostics.log"
+
+            - name: Upload logs
+              uses: actions/upload-artifact@v4
+              with:
+                  name: scriptlauncher-logs
+                  path: |
+                      ScriptLauncher/analyzers-diagnostics.log
+                      ScriptLauncher/build-diagnostics.log

@@ -1,0 +1,75 @@
+{
+  "configVersion": "1.0.0",
+  "organisationName": "Example Health Network",
+  "graph": {
+    "authMode": "Browser",
+    "contextScope": "Process",
+    "requiredScopes": [
+      "DeviceManagementServiceConfig.ReadWrite.All",
+      "DeviceManagementManagedDevices.ReadWrite.All",
+      "Group.ReadWrite.All",
+      "GroupMember.ReadWrite.All",
+      "User.Read.All",
+      "Directory.Read.All"
+    ],
+    "requiredModules": [
+      "Microsoft.Graph.Authentication",
+      "Microsoft.Graph.DeviceManagement.Enrollment"
+    ]
+  },
+  "autopilot": {
+    "deploymentProfileDisplayName": "SJOG Hybrid Join",
+    "preProvisioningGroupDisplayName": "Intune-Autopilot-PreProvisioning",
+    "technicianUpnPrefixes": ["C", "E"],
+    "directorySearchLimit": 15,
+    "recentUsersLimit": 8,
+    "missingSerialHandoffNote": "Use the external Autopilot upload guide when the serial is not yet present in Autopilot."
+  },
+  "demo": {
+    "tenantDisplayName": "Example Health Network Demo",
+    "technicianDisplayName": "Demo Technician",
+    "technicianUserPrincipalName": "c.demo.tech@examplehealth.network",
+    "defaultUsers": [
+      {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "displayName": "Alice Carer",
+        "userPrincipalName": "c.alice.carer@examplehealth.network"
+      },
+      {
+        "id": "22222222-2222-2222-2222-222222222222",
+        "displayName": "Ben Manager",
+        "userPrincipalName": "e.ben.manager@examplehealth.network"
+      },
+      {
+        "id": "33333333-3333-3333-3333-333333333333",
+        "displayName": "Casey Nurse",
+        "userPrincipalName": "c.casey.nurse@examplehealth.network"
+      },
+      {
+        "id": "44444444-4444-4444-4444-444444444444",
+        "displayName": "Dana Support",
+        "userPrincipalName": "e.dana.support@examplehealth.network"
+      },
+      {
+        "id": "55555555-5555-5555-5555-555555555555",
+        "displayName": "Elliot Care Lead",
+        "userPrincipalName": "e.elliot.carelead@examplehealth.network"
+      },
+      {
+        "id": "66666666-6666-6666-6666-666666666666",
+        "displayName": "Harper Coordinator",
+        "userPrincipalName": "c.harper.coordinator@examplehealth.network"
+      },
+      {
+        "id": "77777777-7777-7777-7777-777777777777",
+        "displayName": "Jordan Clinician",
+        "userPrincipalName": "c.jordan.clinician@examplehealth.network"
+      },
+      {
+        "id": "88888888-8888-8888-8888-888888888888",
+        "displayName": "Morgan Service Manager",
+        "userPrincipalName": "e.morgan.servicemanager@examplehealth.network"
+      }
+    ]
+  }
+}

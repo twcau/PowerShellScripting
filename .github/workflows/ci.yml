@@ -1,0 +1,27 @@
+name: CI
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+jobs:
+    build:
+        runs-on: windows-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Setup .NET
+              uses: actions/setup-dotnet@v4
+              with:
+                  dotnet-version: "10.0.x"
+
+            - name: Restore
+              run: dotnet restore PowerShellScriptingNew.sln
+
+            - name: Build (CS86xx as errors)
+              run: |
+                  dotnet build ScriptLauncher/ScriptLauncher.csproj -v minimal \
+                    -warnaserror:CS8600,CS8601,CS8602,CS8603,CS8604,CS8605,CS8606,CS8607,CS8608,CS8609,CS8610,CS8611,CS8612,CS8613,CS8614,CS8615,CS8616,CS8617,CS8618,CS8619,CS8620,CS8621,CS8622,CS8623,CS8624,CS8625,CS8626,CS8627,CS8628,CS8629

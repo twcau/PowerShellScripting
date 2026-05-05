@@ -1,0 +1,360 @@
+<Window x:Class="ScriptLauncher.Views.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:validation="clr-namespace:ScriptLauncher.Validation"
+        xmlns:conv="clr-namespace:ScriptLauncher.Converters"
+        xmlns:vm="clr-namespace:ScriptLauncher.ViewModels"
+        xmlns:models="clr-namespace:ScriptLauncher.Models"
+        xmlns:sys="clr-namespace:System;assembly=mscorlib"
+        Title="Settings"
+        Height="600"
+        Width="800"
+        WindowStartupLocation="CenterOwner"
+        Icon="/Assets/remotetools.ico">
+    <Grid Margin="10"
+          DataContext="{Binding}">
+        <Grid.Resources>
+            <conv:EmptyToUnassignedConverter x:Key="EmptyToUnassignedConverter"/>
+            <!-- Accessible validation template: red border and tooltip with error text -->
+            <Style TargetType="Control"
+                   x:Key="ValidationStyle">
+                <Style.Triggers>
+                    <Trigger Property="Validation.HasError"
+                             Value="True">
+                        <Setter Property="ToolTip"
+                                Value="{Binding RelativeSource={RelativeSource Self}, Path=(Validation.Errors)[0].ErrorContent}"/>
+                        <Setter Property="BorderBrush"
+                                Value="Red"/>
+                        <Setter Property="BorderThickness"
+                                Value="1"/>
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+            <Style TargetType="TextBox"
+                   BasedOn="{StaticResource ValidationStyle}"/>
+            <Style TargetType="ComboBox"
+                   BasedOn="{StaticResource ValidationStyle}"/>
+        </Grid.Resources>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TabControl x:Name="SettingsTabs">
+            <TabItem Header="Categories">
+                <Grid Margin="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*"/>
+                        <ColumnDefinition Width="3*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal"
+                                    Margin="0,0,0,6">
+                                <TextBlock Text="Scope:"
+                                        VerticalAlignment="Center"/>
+                                <ComboBox Width="160"
+                                          Height="26"
+                                          Margin="6,0,0,0"
+                                          SelectedIndex="{Binding CategoriesScopeFilterIndex}">
+                                    <ComboBoxItem Content="Both"/>
+                                    <ComboBoxItem Content="User"/>
+                                    <ComboBoxItem Content="Global"/>
+                                </ComboBox>
+                            </StackPanel>
+                            <ListBox x:Name="CategoriesListBox"
+                                     ItemsSource="{Binding CategoriesView}"
+                                     SelectedItem="{Binding SelectedCategory}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding Name}"/>
+                                            <TextBlock Text=" ("/>
+                                            <TextBlock Text="{Binding Scope}"/>
+                                            <TextBlock Text=")"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </StackPanel>
+                        <StackPanel Grid.Row="1"
+                                    Orientation="Horizontal"
+                                    HorizontalAlignment="Left"
+                                    Margin="0,8,0,0">
+                            <Button Content="+ Add _Category"
+                                    Width="160"
+                                    Click="StartAddCategory_Click"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <StackPanel Grid.Column="1"
+                                Margin="12,0,0,0">
+                        <TextBlock Text="Name"/>
+                        <TextBox x:Name="CategoryNameBox"
+                                 Margin="0,4,0,10"
+                                 Text="{Binding CategoryName, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBlock Text="Scope"/>
+                        <ComboBox x:Name="CategoryScopeCombo"
+                                  Margin="0,4,0,10"
+                                  SelectedIndex="{Binding CategoryScopeIndex}">
+                            <ComboBoxItem Content="User"/>
+                            <ComboBoxItem Content="Global"/>
+                        </ComboBox>
+                        <TextBlock Text="Default Sort"/>
+                        <ComboBox x:Name="CategorySortCombo"
+                                  Margin="0,4,0,10"
+                                  SelectedIndex="{Binding CategorySortIndex}">
+                            <ComboBoxItem Content="A–Z"/>
+                            <ComboBoxItem Content="Z–A"/>
+                        </ComboBox>
+                        <StackPanel Orientation="Horizontal"
+                                    Margin="0,10,0,0">
+                            <Button Content="_Add"
+                                    Width="100"
+                                    Command="{Binding AddCategoryCommand}"/>
+                            <Button Content="_Update"
+                                    Width="100"
+                                    Margin="8,0,0,0"
+                                    Command="{Binding UpdateCategoryCommand}"/>
+                            <Button Content="_Delete"
+                                    Width="100"
+                                    Margin="8,0,0,0"
+                                    Click="DeleteCategory_Click"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+            <TabItem Header="Scripts">
+                <Grid Margin="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*"/>
+                        <ColumnDefinition Width="3*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <StackPanel>
+                            <DockPanel LastChildFill="True"
+                                       Margin="0,0,0,6">
+                                <StackPanel Orientation="Horizontal"
+                                            DockPanel.Dock="Left">
+                                    <TextBlock Text="Scope:"
+                                               VerticalAlignment="Center"/>
+                                    <ComboBox x:Name="ScriptsScopeFilterCombo"
+                                              Width="160"
+                                              Height="26"
+                                              Margin="6,0,0,0"
+                                              SelectedIndex="{Binding ScriptsScopeFilterIndex}"
+                                              VerticalContentAlignment="Center">
+                                        <ComboBoxItem Content="Both"/>
+                                        <ComboBoxItem Content="User"/>
+                                        <ComboBoxItem Content="Global"/>
+                                    </ComboBox>
+                                </StackPanel>
+                                <TextBlock DockPanel.Dock="Right"
+                                           HorizontalAlignment="Right"
+                                           VerticalAlignment="Center"
+                                           Foreground="Gray"
+                                           Text="{Binding UserCategoryCount, StringFormat='Cats U={0}'}"/>
+                                <TextBlock DockPanel.Dock="Right"
+                                           Margin="6,0,0,0"
+                                           HorizontalAlignment="Right"
+                                           VerticalAlignment="Center"
+                                           Foreground="Gray"
+                                           Text="{Binding GlobalCategoryCount, StringFormat='G={0}'}"/>
+                                <TextBlock DockPanel.Dock="Right"
+                                           Margin="12,0,0,0"
+                                           HorizontalAlignment="Right"
+                                           VerticalAlignment="Center"
+                                           Foreground="Gray"
+                                           Text="{Binding UserScriptCount, StringFormat='Scripts U={0}'}"/>
+                                <TextBlock DockPanel.Dock="Right"
+                                           Margin="6,0,0,0"
+                                           HorizontalAlignment="Right"
+                                           VerticalAlignment="Center"
+                                           Foreground="Gray"
+                                           Text="{Binding GlobalScriptCount, StringFormat='G={0}'}"/>
+                            </DockPanel>
+                            <Grid>
+                                <Grid.Resources>
+                                    <HierarchicalDataTemplate DataType="{x:Type vm:SettingsViewModel+CategoryNode}"
+                                            ItemsSource="{Binding Scripts}">
+                                        <TextBlock Text="{Binding Header}"/>
+                                    </HierarchicalDataTemplate>
+                                    <DataTemplate DataType="{x:Type models:ScriptItem}">
+                                        <TextBlock Text="{Binding DisplayName}"
+                                                TextWrapping="Wrap"/>
+                                    </DataTemplate>
+                                </Grid.Resources>
+                                <TreeView x:Name="ScriptsTreeView"
+                                          ItemsSource="{Binding ScriptTree}"
+                                          SelectedItemChanged="ScriptsTreeView_SelectedItemChanged"/>
+                            </Grid>
+                        </StackPanel>
+                        <WrapPanel Grid.Row="1"
+                                   HorizontalAlignment="Left"
+                                   Margin="0,8,0,0">
+                            <Button Content="+ Add _Script"
+                                    Width="140"
+                                    Click="StartAddScript_Click"/>
+                            <Button Content="_Validate Paths"
+                                    Width="140"
+                                    Margin="8,0,0,0"
+                                    Click="ValidatePaths_Click"/>
+                        </WrapPanel>
+                    </Grid>
+
+                    <StackPanel Grid.Column="1"
+                                Margin="12,0,0,0">
+                        <TextBlock Text="Display Name"/>
+                        <TextBox x:Name="ScriptNameBox"
+                                 Margin="0,4,0,10">
+                            <TextBox.Text>
+                                <Binding Path="ScriptName"
+                                         UpdateSourceTrigger="LostFocus">
+                                    <Binding.ValidationRules>
+                                        <validation:RequiredFieldValidationRule/>
+                                    </Binding.ValidationRules>
+                                </Binding>
+                            </TextBox.Text>
+                        </TextBox>
+
+                        <TextBlock Text="Scope"/>
+                        <ComboBox x:Name="ScriptScopeCombo"
+                                  Margin="0,4,0,10"
+                                  SelectedIndex="{Binding ScriptScopeIndex}">
+                            <ComboBoxItem Content="User"/>
+                            <ComboBoxItem Content="Global"/>
+                        </ComboBox>
+
+                        <TextBlock Text="Category"/>
+                        <ComboBox x:Name="ScriptCategoryCombo"
+                                  Margin="0,4,0,10"
+                                  ItemsSource="{Binding CategoryNameOptions}">
+                            <ComboBox.SelectedItem>
+                                <Binding Path="ScriptCategoryName">
+                                    <Binding.ValidationRules>
+                                        <validation:RequiredFieldValidationRule/>
+                                    </Binding.ValidationRules>
+                                </Binding>
+                            </ComboBox.SelectedItem>
+                        </ComboBox>
+
+                        <TextBlock Text="File Path"/>
+                        <DockPanel Margin="0,4,0,10"
+                                   LastChildFill="True">
+                            <Button Content="Browse"
+                                    Width="90"
+                                    DockPanel.Dock="Right"
+                                    Click="BrowseScript_Click"/>
+                            <TextBox x:Name="ScriptPathBox"
+                                     Margin="0,0,8,0">
+                                <TextBox.Text>
+                                    <Binding Path="ScriptPath"
+                                             UpdateSourceTrigger="LostFocus">
+                                        <Binding.ValidationRules>
+                                            <validation:RequiredFieldValidationRule/>
+                                        </Binding.ValidationRules>
+                                    </Binding>
+                                </TextBox.Text>
+                            </TextBox>
+                        </DockPanel>
+
+                        <TextBlock Text="PowerShell Version"/>
+                        <ComboBox x:Name="ScriptPowerCombo"
+                                  Margin="0,4,0,10"
+                                  SelectedIndex="{Binding ScriptPowerIndex}">
+                            <ComboBoxItem Content="7"/>
+                            <ComboBoxItem Content="5"/>
+                        </ComboBox>
+
+                        <CheckBox x:Name="RequiresAdminCheck"
+                                  Content="Requires admin"
+                                  IsChecked="{Binding ScriptRequiresAdmin}"/>
+
+                        <StackPanel Orientation="Horizontal"
+                                    Margin="0,10,0,0">
+                            <Button Content="_Add"
+                                    Width="100"
+                                    Command="{Binding AddScriptCommand}"/>
+                            <Button Content="_Update"
+                                    Width="100"
+                                    Margin="8,0,0,0"
+                                    Command="{Binding UpdateScriptCommand}"/>
+                            <Button Content="_Delete"
+                                    Width="100"
+                                    Margin="8,0,0,0"
+                                    Command="{Binding DeleteScriptCommand}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+            <TabItem Header="Preferences">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Row="0"
+                               Grid.Column="0"
+                               VerticalAlignment="Center"
+                               Text="Auto-refresh (minutes)"/>
+                    <TextBox Grid.Row="0"
+                             Grid.Column="1"
+                             Margin="8,0,0,0"
+                             Height="26"
+                             VerticalContentAlignment="Center"
+                             Text="{Binding PrefAutoRefreshMinutes, UpdateSourceTrigger=PropertyChanged}"/>
+
+                    <CheckBox Grid.Row="1"
+                              Grid.ColumnSpan="2"
+                              Margin="0,8,0,0"
+                              Content="Show taskbar badge on changes"
+                              IsChecked="{Binding PrefShowBadgeNotification}"/>
+                    <CheckBox Grid.Row="2"
+                              Grid.ColumnSpan="2"
+                              Margin="0,8,0,0"
+                              Content="Show toast notification on changes"
+                              IsChecked="{Binding PrefShowToastNotification}"/>
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <StackPanel Grid.Row="1"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,10,0,0">
+            <Button Content="_History"
+                    Width="110"
+                    Margin="0,0,8,0"
+                    Click="OpenHistory_Click"/>
+            <Button Content="_Save"
+                    Width="110"
+                    IsDefault="True"
+                    Click="Save_Click"/>
+            <Button Content="_Cancel"
+                    Width="110"
+                    Margin="8,0,0,0"
+                    Click="Cancel_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

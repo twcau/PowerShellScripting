@@ -1,0 +1,44 @@
+{
+  "Categories": [
+    {
+      "Name": "AD - General",
+      "DefaultSort": 0,
+      "Scope": 1,
+      "Label": "AD - General (User)"
+    },
+    {
+      "Name": "AD - Machine",
+      "DefaultSort": 0,
+      "Scope": 1,
+      "Label": "AD - Machine (User)"
+    },
+    {
+      "Name": "AD - User Management",
+      "DefaultSort": 0,
+      "Scope": 1,
+      "Label": "AD - User Management (User)"
+    },
+    {
+      "Name": "E365",
+      "DefaultSort": 0,
+      "Scope": 1,
+      "Label": "E365 (User)"
+    },
+    {
+      "Name": "General",
+      "DefaultSort": 0,
+      "Scope": 1,
+      "Label": "General (User)"
+    }
+  ],
+  "Scripts": [
+    {
+      "DisplayName": "Quarantine to Block Manager",
+      "Category": "E365",
+      "FilePath": "C:\\Users\\pc\\OneDrive - Crispy Kangaroo\\Documents\\GitProjects\\PowerShellScriptingNew\\e365\\quarantine-to-block.ps1",
+      "RequiresAdmin": true,
+      "Scope": 1,
+      "PowerShellVersion": 7
+    }
+  ]
+}

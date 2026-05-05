@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="turbo-root" content="/PowerShellScripting">
-    <meta name="turbo-cache-control" content="no-cache" data-turbo-track="reload" data-track-token="3.11.0.815049006535">
+    <meta name="turbo-cache-control" content="no-cache" data-turbo-track="reload" data-track-token="3.11.0.816013946385">
 
     <!-- See retype.com -->
     <meta name="generator" content="Retype 3.11.0">
@@ -32,11 +32,11 @@
     <script data-cfasync="false">(function(){var cl=document.documentElement.classList,ls=localStorage.getItem("retype_scheme"),hd=cl.contains("dark"),hl=cl.contains("light"),wm=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches;if(ls==="dark"||(!ls&&wm&&!hd&&!hl)){cl.remove("light");cl.add("dark")}else if(ls==="light"||(!ls&&!wm&&!hd&&!hl)){cl.remove("dark");cl.add("light")}})();</script>
 
     <link href="../../../../../favicon.ico" rel="icon">
-    <link href="../../../../../resources/css/retype.css?v=3.11.0.815049006535" rel="stylesheet">
+    <link href="../../../../../resources/css/retype.css?v=3.11.0.816013946385" rel="stylesheet">
 
-    <script data-cfasync="false" src="../../../../../resources/js/config.js?v=3.11.0.815049006535" data-turbo-eval="false" defer></script>
+    <script data-cfasync="false" src="../../../../../resources/js/config.js?v=3.11.0.816013946385" data-turbo-eval="false" defer></script>
     <script data-cfasync="false" src="../../../../../resources/js/retype.js?v=3.11.0" data-turbo-eval="false" defer></script>
-    <script id="lunr-js" data-cfasync="false" src="../../../../../resources/js/lunr.js?v=3.11.0.815049006535" data-turbo-eval="false" defer></script>
+    <script id="lunr-js" data-cfasync="false" src="../../../../../resources/js/lunr.js?v=3.11.0.816013946385" data-turbo-eval="false" defer></script>
 </head>
 <body>
     <div id="retype-app" class="relative text-base antialiased text-base-text bg-base-bg font-body">
@@ -229,12 +229,27 @@
     </h1>
 </doc-anchor-target>
 <p>This page describes the overall remediation logic and the primary remediation actions executed by the script.</p>
-<p>This list is intended as a quick reference. Each function includes an inline comment block in the script describing behaviour, safety considerations and edge cases. When writing tests or adapting the script, prefer calling these helpers rather than re-implementing enumerators or retry logic.</p>
+<p>This page is a concise, single-reference summary of the remediation flow implemented by <code v-pre>Win-Storage-Remediate.ps1</code>. It intentionally links to the helper functions in the script for implementation details; prefer calling the helpers from tests rather than reimplementing enumerators or retry logic.</p>
+<!-- omit from toc -->
+<doc-anchor-target id="table-of-contents">
+    <h2>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#table-of-contents">#</doc-anchor-trigger>
+        <span>Table of contents</span>
+    </h2>
+</doc-anchor-target>
 <ul>
-<li><doc-anchor-trigger to="#overview">Overview</doc-anchor-trigger></li>
-<li><doc-anchor-trigger to="#remediation-script-logic">Remediation Script Logic</doc-anchor-trigger>
+<li><doc-anchor-trigger to="#quick-reference-where-to-find-the-code">Quick reference: where to find the code</doc-anchor-trigger>
 <ul>
-<li><doc-anchor-trigger to="#cleanmgr-cleanup">CleanMgr Cleanup</doc-anchor-trigger></li>
+<li><doc-anchor-trigger to="#helper-anchors">Helper anchors</doc-anchor-trigger>
+<ul>
+<li><doc-anchor-trigger to="#write-custommessage">Write-CustomMessage</doc-anchor-trigger></li>
+<li><doc-anchor-trigger to="#get-recyclebinsize">Get-RecycleBinSize</doc-anchor-trigger></li>
+<li><doc-anchor-trigger to="#invoke-dism-safe">Invoke-DISM-Safe</doc-anchor-trigger></li>
+<li><doc-anchor-trigger to="#invoke-removewithretry">Invoke-RemoveWithRetry</doc-anchor-trigger></li>
+</ul>
+</li>
+</ul>
+</li>
 <li><doc-anchor-trigger to="#storage-sense-cleanup">Storage Sense Cleanup</doc-anchor-trigger></li>
 <li><doc-anchor-trigger to="#dism-component-store-cleanup">DISM Component Store Cleanup</doc-anchor-trigger></li>
 <li><doc-anchor-trigger to="#user-specific-temporary-file-cleanup">User-Specific Temporary File Cleanup</doc-anchor-trigger></li>
@@ -242,105 +257,165 @@
 <li><doc-anchor-trigger to="#old-user-profile-cleanup">Old User Profile Cleanup</doc-anchor-trigger></li>
 <li><doc-anchor-trigger to="#logging">Logging</doc-anchor-trigger></li>
 <li><doc-anchor-trigger to="#disk-space-accounting">Disk Space Accounting</doc-anchor-trigger></li>
-</ul>
-</li>
 <li><doc-anchor-trigger to="#notes-for-testers-and-automation">Notes for testers and automation</doc-anchor-trigger></li>
 </ul>
-<doc-anchor-target id="overview">
+<doc-anchor-target id="quick-reference-where-to-find-the-code">
     <h2>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#overview">#</doc-anchor-trigger>
-        <span>Overview</span>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#quick-reference-where-to-find-the-code">#</doc-anchor-trigger>
+        <span>Quick reference: where to find the code</span>
     </h2>
 </doc-anchor-target>
-<p>This page covers the remediation flow used by <code v-pre>Win-Storage-Remediate.ps1</code>. Each major action is described with safety notes and references to helper functions.</p>
-<doc-anchor-target id="remediation-script-logic">
-    <h2>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#remediation-script-logic">#</doc-anchor-trigger>
-        <span>Remediation Script Logic</span>
-    </h2>
-</doc-anchor-target>
-<p>The remediation script performs the following actions. Each major action below is given a short subsection heading to provide stable anchors for the documentation and Intune parameter links.</p>
-<doc-anchor-target id="cleanmgr-cleanup">
+<p>If you want to jump straight to the implementation in the script, the primary helpers and regions are:</p>
+<ul>
+<li><code v-pre>Write-CustomMessage</code> — centralised log-first message writer (writes to the per-run temp log and emits host output only in verbose mode).</li>
+<li><code v-pre>Merge-Log</code> — consolidates the temporary per-run log into the main log file and implements a fast-path when <code v-pre>SKIP_SLOW_IO</code> is set plus fallback archival behaviour.</li>
+<li><code v-pre>Get-RecycleBinSize</code> — COM-first probe with per-user <code v-pre>$Recycle.Bin</code> fallback; returns a stable numeric value (int64) or 0 on failure.</li>
+<li><code v-pre>Invoke-DISM-Safe</code> and <code v-pre>Wait-ForDISM</code> — DISM wrapper and helper that implement pending-reboot gating and <code v-pre>ShouldProcess</code> support.</li>
+<li><code v-pre>Invoke-UserTempCleanup</code>, <code v-pre>Invoke-GlobalTempCleanup</code>, <code v-pre>Invoke-RemoveWithRetry</code>, <code v-pre>Get-SafeChildItems</code> — safe enumerators and removal helpers used for per-user temp and global temp cleanup.</li>
+<li>Event-log helpers (wevtutil wrapper) — robust <code v-pre>wevtutil epl</code>/<code v-pre>wevtutil cl</code> wrapper with quoting fallbacks for problematic channel names.</li>
+<li>Region comment: &quot;Region 2A - Remove old user profiles&quot; — contains the logic that enumerates and removes old user profiles based on <code v-pre>$userProfileRetentionDays</code>.</li>
+</ul>
+<p>These helpers are implemented inline in <code v-pre>intune/remediation/Win-Storage-Remediate.ps1</code> and include detailed comment-blocks describing behaviour and edge cases. Refer to the function names above to locate the code quickly.</p>
+<doc-anchor-target id="helper-anchors">
     <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#cleanmgr-cleanup">#</doc-anchor-trigger>
-        <span>CleanMgr Cleanup</span>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#helper-anchors">#</doc-anchor-trigger>
+        <span>Helper anchors</span>
     </h3>
 </doc-anchor-target>
-<ul>
-<li>Prepares selected <code v-pre>CleanMgr</code> VolumeCaches by setting <code v-pre>StateFlags0001</code> in the registry.</li>
-<li>Suppresses the Disk Cleanup GUI to ensure silent execution.</li>
-<li>Validates the <code v-pre>cleanmgr.exe</code> path before execution.</li>
-<li>Logs the process exit code.</li>
-</ul>
+<p>The following short headings provide stable fragment IDs so you can link directly to key helpers in the document or other pages.</p>
+<doc-anchor-target id="write-custommessage">
+    <h4>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#write-custommessage">#</doc-anchor-trigger>
+        <span>Write-CustomMessage</span>
+    </h4>
+</doc-anchor-target>
+<p>See the <code v-pre>Write-CustomMessage</code> helper in the script for the log-first behaviour and how the temporary per-run log is written. Use this ID to link directly to the function description.</p>
+<doc-anchor-target id="get-recyclebinsize">
+    <h4>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#get-recyclebinsize">#</doc-anchor-trigger>
+        <span>Get-RecycleBinSize</span>
+    </h4>
+</doc-anchor-target>
+<p>See the <code v-pre>Get-RecycleBinSize</code> helper for details about COM-first probing and the conservative per-user fallback.</p>
+<doc-anchor-target id="invoke-dism-safe">
+    <h4>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#invoke-dism-safe">#</doc-anchor-trigger>
+        <span>Invoke-DISM-Safe</span>
+    </h4>
+</doc-anchor-target>
+<p>See <code v-pre>Invoke-DISM-Safe</code> for the DISM wrapper behaviour, pending-reboot gating and <code v-pre>ShouldProcess</code> support.</p>
+<doc-anchor-target id="invoke-removewithretry">
+    <h4>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#invoke-removewithretry">#</doc-anchor-trigger>
+        <span>Invoke-RemoveWithRetry</span>
+    </h4>
+</doc-anchor-target>
+<p>See <code v-pre>Invoke-RemoveWithRetry</code> for path canonicalisation, protection checks and retry/backoff behaviour.</p>
 <doc-anchor-target id="storage-sense-cleanup">
-    <h3>
+    <h2>
         <doc-anchor-trigger class="header-anchor-trigger" to="#storage-sense-cleanup">#</doc-anchor-trigger>
         <span>Storage Sense Cleanup</span>
-    </h3>
+    </h2>
 </doc-anchor-target>
 <ul>
-<li>Configures and triggers Storage Sense to remove temporary files and locally cached OneDrive content.</li>
-<li>Uses <code v-pre>Set-StorageSense</code> and <code v-pre>Start-StorageSense</code> cmdlets where available.</li>
+<li>Configures and triggers Storage Sense to remove temporary files and locally cached OneDrive content where supported.</li>
+<li>Uses <code v-pre>Set-StorageSense</code> and <code v-pre>Start-StorageSense</code> when those cmdlets are available; otherwise the script logs that Storage Sense is not configurable on the host.</li>
 </ul>
+<p>Safety notes: configuration is applied only when supported and the effective configuration and results are written to the temporary per-run log.</p>
 <doc-anchor-target id="dism-component-store-cleanup">
-    <h3>
+    <h2>
         <doc-anchor-trigger class="header-anchor-trigger" to="#dism-component-store-cleanup">#</doc-anchor-trigger>
         <span>DISM Component Store Cleanup</span>
-    </h3>
+    </h2>
 </doc-anchor-target>
 <ul>
-<li>Runs <code v-pre>DISM</code> with <code v-pre>/Online /Cleanup-Image /StartComponentCleanup</code> to clean up the WinSxS component store.</li>
-<li>Logs the process exit code and respects pending-reboot detection.</li>
+<li>Runs DISM with <code v-pre>/Online /Cleanup-Image /StartComponentCleanup</code> to reduce WinSxS component store size.</li>
+<li>The DISM wrapper functions support <code v-pre>ShouldProcess</code>, so callers can use <code v-pre>-WhatIf</code>/<code v-pre>-Confirm</code> for non-destructive dry-runs.</li>
+<li>Pending reboot behaviour: the script detects a pending reboot and will skip DISM unless forced with <code v-pre>-ForceDISMWhenPending</code> or <code v-pre>$Pref_ForceDISMWhenPendingOverride = $true</code>.</li>
 </ul>
+<p>Precedence note: the wrapper (<code v-pre>Invoke-DISM-Safe</code>) checks for the command-line switch <code v-pre>-ForceDISMWhenPending</code> (when the script is invoked with that parameter) and the file-level preference <code v-pre>$Pref_ForceDISMWhenPendingOverride</code>. Either will force a DISM run when a pending reboot is detected; the wrapper evaluates both.</p>
+<p>Safety notes: DISM can be long-running and may need elevation; exit codes and timing are logged to the per-run log. The DISM wrapper is declared with <code v-pre>SupportsShouldProcess</code> so callers may use <code v-pre>-WhatIf</code>/<code v-pre>-Confirm</code> for safe dry-runs.</p>
 <doc-anchor-target id="user-specific-temporary-file-cleanup">
-    <h3>
+    <h2>
         <doc-anchor-trigger class="header-anchor-trigger" to="#user-specific-temporary-file-cleanup">#</doc-anchor-trigger>
         <span>User-Specific Temporary File Cleanup</span>
-    </h3>
+    </h2>
 </doc-anchor-target>
 <ul>
-<li>Removes files from <code v-pre>%USERPROFILE%\\AppData\\Local\\Temp</code>, leaving folders expressly excluded by the script.</li>
-<li>Implements retry logic for file access conflicts and respects <code v-pre>$MaxCleanupDurationMinutes</code> time budgets.</li>
+<li>Enumerates user profiles under <code v-pre>C:\Users</code> with safe enumerators and removes per-user temporary files (for example <code v-pre>%LOCALAPPDATA%\Temp</code>, browser caches when requested, and other safe targets).</li>
+<li>The script protects system and special folders and will not operate on protected paths; helpers perform path canonicalisation and protection checks.</li>
+</ul>
+<p>Privacy and host output:</p>
+<ul>
+<li>Per-profile deletion details (file paths and per-user actions) are written only to the per-run temporary log. The host/Intune output intentionally emits a compact aggregated summary to avoid leaking PII. Example host message: <code v-pre>User profile cleanup completed. RemovedCount=3; FailedCount=0</code>.</li>
+</ul>
+<p>Note: the script intentionally emits only that compact summary text to the host (Intune captures host output); detailed per-file and per-profile diagnostics are preserved only in the per-run temp log.</p>
+<p>Performance option:</p>
+<ul>
+<li><code v-pre>SKIP_SLOW_IO</code> is propagated into the environment (as <code v-pre>SKIP_SLOW_IO</code>) to enable fast-path behaviour for CI/tests (reduces retries/backoff and skips deep slow enumerations).</li>
+</ul>
+<p>SKIP_SLOW_IO and Merge-Log behaviour:</p>
+<ul>
+<li>When <code v-pre>SKIP_SLOW_IO</code> is set the script sets the environment variable <code v-pre>SKIP_SLOW_IO=1</code>. Helpers consult this environment value to avoid slow enumerations and blocking I/O.</li>
+<li><code v-pre>Merge-Log</code> implements a fast-path when <code v-pre>SKIP_SLOW_IO</code> is present. In fast-path mode Merge-Log simulates a successful merge for tests/CI to avoid blocking on file locks. If Merge-Log cannot merge in normal runs it will attempt a timestamped copy to the archive directory and write a diagnostic file — see the Merge-Log helper for details.</li>
 </ul>
 <doc-anchor-target id="event-log-cleanup">
-    <h3>
+    <h2>
         <doc-anchor-trigger class="header-anchor-trigger" to="#event-log-cleanup">#</doc-anchor-trigger>
         <span>Event Log Cleanup</span>
-    </h3>
+    </h2>
 </doc-anchor-target>
 <ul>
-<li>Exports selected logs to an archive directory (<code v-pre>$env:TEMP\\EventLogArchives</code>) using <code v-pre>wevtutil epl</code>.</li>
-<li>Clears selected logs using <code v-pre>wevtutil cl</code> after successful export.</li>
+<li>Exports selected event logs to an archive folder (<code v-pre>$env:TEMP\EventLogArchives</code>) using <code v-pre>wevtutil epl</code> and clears logs with <code v-pre>wevtutil cl</code> after successful export.</li>
+<li>Safety notes: logs are cleared only after successful export; failures are retained and logged to the per-run log.</li>
 </ul>
+<p>Implementation note: the event-log helper calls the Windows <code v-pre>wevtutil</code> binary directly and includes fallbacks when <code v-pre>wevtutil epl</code> returns a parameter error for certain channel names — it retries via <code v-pre>cmd /c</code> with quoted args. This makes the export/clear step more robust on channels that contain spaces or special characters.</p>
 <doc-anchor-target id="old-user-profile-cleanup">
-    <h3>
+    <h2>
         <doc-anchor-trigger class="header-anchor-trigger" to="#old-user-profile-cleanup">#</doc-anchor-trigger>
         <span>Old User Profile Cleanup</span>
-    </h3>
+    </h2>
 </doc-anchor-target>
 <ul>
-<li>Removes user profiles under <code v-pre>C:\Users</code> that are not whitelisted (<code v-pre>Default</code>, <code v-pre>Default User</code>, <code v-pre>Public</code>, <code v-pre>All Users</code>) and have not been used in the last <code v-pre>$userProfileRetentionDays</code> days.</li>
+<li>Removes user profiles under <code v-pre>C:\Users</code> that are not whitelisted (<code v-pre>Default</code>, <code v-pre>Default User</code>, <code v-pre>Public</code>, <code v-pre>All Users</code>) and whose last use is older than <code v-pre>$userProfileRetentionDays</code> days.</li>
+<li>The deletion process uses safe checks, retries and canonical path validation. Per-profile success/failure is written to the per-run temporary log; the host receives only an aggregated summary.</li>
 </ul>
+<p>Implementation note: profile removal is implemented in the script region labelled <code v-pre>Region 2A - Remove old user profiles</code>. The region checks a whitelist (for example <code v-pre>Default</code>, <code v-pre>Default User</code>, <code v-pre>Public</code>, <code v-pre>All Users</code>) and skips protected system profiles.</p>
 <doc-anchor-target id="logging">
-    <h3>
+    <h2>
         <doc-anchor-trigger class="header-anchor-trigger" to="#logging">#</doc-anchor-trigger>
         <span>Logging</span>
-    </h3>
+    </h2>
 </doc-anchor-target>
 <ul>
-<li>Centralised logging with <code v-pre>Start-Transcript</code> and <code v-pre>Write-Log</code>.</li>
-<li>Temporary logs are consolidated into the main log file at the end of the script; archives are created per-run.</li>
+<li>The script uses a &quot;log-first&quot; approach: full run details (including per-profile entries) are appended to a per-run temporary log (<code v-pre>%TEMP%\&lt;scriptName&gt;_temp.log</code>).</li>
+<li>Host output is kept minimal (compact summaries and essential progress) to avoid PII exposure and to keep Intune-captured output concise.</li>
+<li>At run end the temporary log is consolidated into the main archive and a per-run archive is created.</li>
+</ul>
+<p>Merge-Log fallback behaviour:</p>
+<ul>
+<li><code v-pre>Merge-Log</code> will attempt multiple read/write retries with exponential backoff to handle locked temp logs.</li>
+<li>If a direct merge fails, the helper falls back to copying the temp log to a timestamped file in the archive directory and writes a short diagnostic file describing the merge failure. This ensures per-run data is never silently lost.</li>
+</ul>
+<p>Inspecting logs:</p>
+<ul>
+<li>For troubleshooting or tests, run the script with <code v-pre>-DryRun -Verbosity Verbose</code> and inspect the temporary per-run log in <code v-pre>%TEMP%</code> for full details.</li>
+</ul>
+<p>Verbosity note:</p>
+<ul>
+<li>Default behaviour is <code v-pre>-Verbosity Normal</code>. When <code v-pre>-Verbosity Verbose</code> is used the script sets <code v-pre>$VerbosePreference = 'Continue'</code> and <code v-pre>Write-CustomMessage</code> also emits verbose host output (helpful for interactive debugging). In Normal mode, host output is compact and per-file details remain in the temp log.</li>
 </ul>
 <doc-anchor-target id="disk-space-accounting">
-    <h3>
+    <h2>
         <doc-anchor-trigger class="header-anchor-trigger" to="#disk-space-accounting">#</doc-anchor-trigger>
         <span>Disk Space Accounting</span>
-    </h3>
+    </h2>
 </doc-anchor-target>
 <ul>
-<li>Captures initial free space on <code v-pre>C:</code> before remediation.</li>
-<li>Captures final free space after remediation and calculates the recovered space.</li>
+<li>Captures initial free space on the target volume (typically <code v-pre>C:</code>) and final free space after remediation; recovered bytes are calculated and recorded.</li>
+<li>Recycle Bin estimation: the script attempts a COM (Shell.Application) query first, and falls back to per-user <code v-pre>Recycle.Bin</code> enumeration when COM is not available; results are normalised to an integer value.</li>
 </ul>
+<p>Caveat: the per-user <code v-pre>Recycle.Bin</code> enumeration fallback is intentionally conservative and may under-report the true bin size in some hosts (for example when access is denied or when running as SYSTEM). When the COM path is available it tends to be more accurate.</p>
 <doc-anchor-target id="notes-for-testers-and-automation">
     <h2>
         <doc-anchor-trigger class="header-anchor-trigger" to="#notes-for-testers-and-automation">#</doc-anchor-trigger>
@@ -348,9 +423,21 @@
     </h2>
 </doc-anchor-target>
 <ul>
-<li>Prefer <code v-pre>-DryRun</code> for initial tests.</li>
-<li>Use <code v-pre>-CleanMgrOnly</code> to test CleanMgr preparation without further changes.</li>
-<li>Use <code v-pre>-SKIP_SLOW_IO</code> on slow VMs to avoid long enumeration passes.</li>
+<li>Default testing: prefer <code v-pre>-DryRun</code> to validate actions without making changes.</li>
+<li>Use <code v-pre>-CleanMgrOnly</code> to test CleanMgr preparation behaviour.</li>
+<li>Use <code v-pre>-SKIP_SLOW_IO</code> in CI or slow VMs to avoid long enumeration passes.</li>
+<li>To see full per-profile details, run with <code v-pre>-DryRun -Verbosity Verbose</code> and open the temporary per-run log file.</li>
+</ul>
+<p>Testing notes (Pester guidance):</p>
+<ul>
+<li>Prefer <code v-pre>-DryRun</code> for initial tests to avoid destructive changes.</li>
+<li>Use <code v-pre>-SKIP_SLOW_IO</code> in CI or on slow VMs to speed up tests and exercise the fast-path behaviours.</li>
+<li>For DISM-related tests, consume <code v-pre>Invoke-DISM-Safe</code> as a unit under test and make use of its <code v-pre>ShouldProcess</code> semantics (<code v-pre>-WhatIf</code>) where appropriate.</li>
+<li>Tests that need to assert per-profile details should read the per-run temp log file in <code v-pre>%TEMP%</code> rather than relying on host output.</li>
+</ul>
+<p>Where to look in the code</p>
+<ul>
+<li>Primary script: <code v-pre>intune/remediation/Win-Storage-Remediate.ps1</code> (helper function comments are the canonical source of behaviour and edge-case handling).</li>
 </ul>
 
                                 

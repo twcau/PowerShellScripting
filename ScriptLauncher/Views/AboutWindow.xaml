@@ -1,0 +1,24 @@
+<Window x:Class="ScriptLauncher.Views.AboutWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="About" Width="480" WindowStartupLocation="CenterOwner" ResizeMode="NoResize" SizeToContent="WidthAndHeight" Icon="/Assets/remotetools.ico">
+    <Grid Margin="12">
+        <StackPanel>
+            <TextBlock Text="Script Launcher" FontSize="20" FontWeight="Bold"/>
+            <TextBlock Text="A simple, accessible GUI to organise and run PowerShell scripts by category." TextWrapping="Wrap" Margin="0,8,0,0"/>
+            <TextBlock Text="Features:" FontWeight="Bold" Margin="0,12,0,4"/>
+            <TextBlock TextWrapping="Wrap">
+                <Run Text="• Categories and sorting"/>
+                <LineBreak/>
+                <Run Text="• Browse and set script paths"/>
+                <LineBreak/>
+                <Run Text="• Optional admin elevation"/>
+                <LineBreak/>
+                <Run Text="• Settings to manage scripts and categories"/>
+            </TextBlock>
+            <TextBlock Text="Copyright © 2026 Michael Harris, All rights reserved." Margin="0,12,0,0"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+                <Button Content="_Close" Width="100" IsDefault="True"/>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>

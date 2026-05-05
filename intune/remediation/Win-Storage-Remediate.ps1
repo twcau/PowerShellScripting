@@ -1,22 +1,30 @@
 ﻿# region 0 - Header
 <#
-.TITLE
-Win-Storage Intune Remediation
+.SYNOPSIS
+Win-Storage Intune Remediation - storage and disk cleanup passes used by Intune remediation scripts.
 
-try {
-    Write-CustomMessage "Checking for pending operations before DISM cleanup."
-    $dismResult = Invoke-DISM-Safe
-    if ($dismResult.Ran -eq $false) {
-        Write-CustomMessage ("DISM step skipped or dry-run: {0}" -f ($dismResult.Reason -or $dismResult.Error))
-    }
-    else {
-        if ($dismResult.ExitCode -eq 0) { Write-CustomMessage "DISM component store cleanup completed successfully." }
-        else { Write-CustomMessage ("ERROR: DISM cleanup failed with exit code {0}." -f $dismResult.ExitCode) }
-    }
-}
-catch {
-    Write-CustomMessage (("ERROR: DISM cleanup encountered an exception: {0}" -f $($_.Exception.Message)))
-}
+.DESCRIPTION
+This script provides a collection of safe, configurable cleanup passes (user temp, global temp,
+browser caches, Delivery Optimization, DISM component store cleanup and more). It is designed for
+use as an Intune remediation script or run interactively by an administrator. The core functions are
+dry-run aware and include safety checks to avoid destructive actions on protected or system paths.
+
+.PARAMETER DryRun
+Runs the script in a non-destructive mode where removal actions are only logged and not performed.
+
+.PARAMETER SKIP_SLOW_IO
+When set, the script avoids blocking or slow I/O operations so unit tests run quickly.
+
+.PARAMETER ForceDISMWhenPending
+When set, force DISM component store cleanup to run even if a pending reboot is detected.
+
+.PARAMETER Verbosity
+Controls logging verbosity. Allowed values: Silent, Normal, Verbose.
+
+.EXAMPLE
+
+.\Win-Storage-Remediate.ps1 -DryRun
+
 .COPYRIGHT
 Copyright (c) 2025, Michael Harris. All rights reserved.
 #>
@@ -31,39 +39,142 @@ param(
     $SKIP_SLOW_IO,
     [switch]
     $ForceDISMWhenPending,
+    [switch]
+    $PreserveTempLog,
     [ValidateSet('Silent', 'Normal', 'Verbose')]
     [string]
-    $Verbosity = 'Silent',
+    $Verbosity = 'Normal',
     [switch]
     $CleanMgrOnly,
     [switch]
     $Estimate
 )
+
+# Normalise switch parameters once so downstream helpers can rely on simple
+# boolean semantics even when the script is AST-loaded or invoked via tests.
+$DryRun = [bool]$DryRun
+$SKIP_SLOW_IO = [bool]$SKIP_SLOW_IO
+$ForceDISMWhenPending = [bool]$ForceDISMWhenPending
+$PreserveTempLog = [bool]$PreserveTempLog
+$CleanMgrOnly = [bool]$CleanMgrOnly
+$Estimate = [bool]$Estimate
+
+# Propagate SKIP_SLOW_IO into the environment so helper code can check it consistently
+if ($SKIP_SLOW_IO) { $env:SKIP_SLOW_IO = '1' } else { if ($env:SKIP_SLOW_IO) { Remove-Item -Path Env:\SKIP_SLOW_IO -ErrorAction SilentlyContinue } }
+
+# Prevent static analyzer warnings for parameters that are referenced indirectly
+$null = $ForceDISMWhenPending, $SKIP_SLOW_IO
+
 # endregion
 
 # region 0B - Command variables
 
 # Configure verbosity for Write-Verbose
 if ($Verbosity -eq 'Verbose') { $VerbosePreference = 'Continue' } else { $VerbosePreference = 'SilentlyContinue' }
+# Early verbose buffer and wrapper: capture verbose messages emitted before logging helpers are defined.
+# Messages are buffered and flushed into the temporary log by Write-CustomMessage when it runs.
+if (-not $script:VerboseBuffer) { $script:VerboseBuffer = @() }
+function Write-Verbose {
+    param([Parameter(ValueFromPipeline = $true, Position = 0)][string]$Message)
+    process {
+        try { if ($Message) { $script:VerboseBuffer += $Message } } catch {}
+        & Microsoft.PowerShell.Utility\Write-Verbose -Message $Message
+    }
+}
+# Wrapper around Start-Process to prevent destructive external invocations during DryRun.
+# This function shadows the builtin Start-Process within the script scope and forwards
+# to the real cmdlet for non-blocked processes. It specifically prevents starting
+# cleanmgr.exe when DryRun or WhatIf are active and logs a DRYRUN line instead.
+function Start-Process {
+    [CmdletBinding(DefaultParameterSetName = 'Default')]
+    param(
+        [Parameter(Position = 0, Mandatory = $true)][string]$FilePath,
+        [Parameter(Position = 1)][Object]$ArgumentList,
+        [switch]$NoNewWindow,
+        [switch]$Wait,
+        [switch]$PassThru,
+        [string]$WindowStyle,
+        [string]$WorkingDirectory
+    )
+    process {
+        try {
+            $whatIfRequested = $false
+            if ($PSBoundParameters.ContainsKey('WhatIf')) { $whatIfRequested = $true }
+            if ($whatIfRequested -or $DryRun) {
+                if ($FilePath -match '(?i)cleanmgr(\.exe)?$') {
+                    try { Write-CustomMessage ("DRYRUN: Would start process: {0} {1}" -f $FilePath, ($ArgumentList -join ' ')) -Level INFO } catch { }
+                    if ($PassThru) { return [pscustomobject]@{ ExitCode = 0 } }
+                    return
+                }
+            }
+        }
+        catch { }
+
+        # Forward to the real Start-Process for non-intercepted commands
+        $splat = @{
+            FilePath = $FilePath
+        }
+        if ($PSBoundParameters.ContainsKey('ArgumentList')) { $splat.ArgumentList = $ArgumentList }
+        if ($PSBoundParameters.ContainsKey('NoNewWindow')) { $splat.NoNewWindow = $NoNewWindow }
+        if ($PSBoundParameters.ContainsKey('Wait')) { $splat.Wait = $Wait }
+        if ($PSBoundParameters.ContainsKey('PassThru')) { $splat.PassThru = $PassThru }
+        if ($PSBoundParameters.ContainsKey('WindowStyle')) { $splat.WindowStyle = $WindowStyle }
+        if ($PSBoundParameters.ContainsKey('WorkingDirectory')) { $splat.WorkingDirectory = $WorkingDirectory }
+
+        return & Microsoft.PowerShell.Management\Start-Process @splat
+    }
+}
 # endregion
 
 # region 0C - Configuration parameters
 
-# Basic parameters
-$oneDriveCleanupThreshold = 30
-$userProfileRetentionDays = 30
-$scriptName = 'Remediate-DiskCleanup-Extended'
+# Logging parameters
+$scriptName = 'Win-Storage-Remediate'
 $logFile = "$env:TEMP\${scriptName}.log"
 $transcriptStarted = $false
 
 # Safety/config flags for heavy cleanup behavior
-$tempLogSizeThresholdMB = 5    # If existing temp log is larger than this (MB), archive it at startup
-$tempLogAgeDays = 7            # If existing temp log is older than this (days), archive it at startup
-$MaxCleanupDurationMinutes = 20 # Max time to spend in recursive cleanup loops before breaking out
+# If existing temp log is larger than this (MB), archive it at startup
+$tempLogSizeThresholdMB = 5
+# If existing temp log is older than this (days), archive it at startup
+$tempLogAgeDays = 7
+# Max time to spend in recursive cleanup loops before breaking out
+$MaxCleanupDurationMinutes = 20
 # No-op reference for static analysis tools when the variable is unused in trimmed flows
 $null = $MaxCleanupDurationMinutes
 
-# Locations to clean up with cleanmgr.exe
+# Per-activity preferences
+# Toggle these to enable or disable individual cleanup activities between Regions 2A and 7C.
+# $true = activity will be performed, $false = activity will not be performed.
+# Higher-risk overrides remain disabled unless explicitly enabled.
+$Pref_RemoveOldUserProfiles = $true
+$Pref_OneDriveAndBrowserCache = $true
+$Pref_DeliveryOptimizationAndWU = $true
+$Pref_StorageSense = $true
+$Pref_DISMComponentStoreCleanup = $true
+# Allow an explicit override to force DISM to run even when a pending reboot is detected
+$Pref_ForceDISMWhenPendingOverride = $false
+$Pref_EventLogCleanup = $true
+$Pref_UserTempCleanup = $true
+$Pref_GlobalTempCleanup = $true
+$Pref_CleanMgrPrep = $true
+$Pref_RunCleanMgr = $true
+# Preference to optionally remove C:\Windows.old (disabled by default; dangerous)
+$Pref_RemoveWindowsOld = $false
+
+# Basic parameters
+# Remove user profile where the profile has not logged into the device within the last X days
+$userProfileRetentionDays = 180
+# Remove OneDrive file caches where the file has not used within the last X days
+$oneDriveCleanupThreshold = 30
+
+# Suppress 'assigned but not used' warnings by referencing prefs in a no-op way
+$null = $Pref_RemoveOldUserProfiles, $Pref_OneDriveAndBrowserCache, $Pref_DeliveryOptimizationAndWU, $Pref_StorageSense, $Pref_DISMComponentStoreCleanup, $Pref_EventLogCleanup, $Pref_UserTempCleanup, $Pref_GlobalTempCleanup, $Pref_CleanMgrPrep, $Pref_RunCleanMgr, $Pref_ForceDISMWhenPendingOverride, $Pref_RemoveWindowsOld
+
+# The per-activity prefs are referenced directly where they gate each region below.
+# Keep the $null suppression above to avoid false positive warnings from static analysis in trimmed flows.
+
+# cleanmgr.exe - locations to target during this step
 $cleanupTypeSelection = @(
     'Downloaded Program Files', 'GameNewsFiles', 'GameStatisticsFiles', 'GameUpdateFiles',
     'Memory Dump Files', 'Old ChkDsk Files', 'Recycle Bin',
@@ -75,7 +186,7 @@ $cleanupTypeSelection = @(
     'Internet Cache Files'
 )
 
-# Paths or patterns to skip during aggressive cleanup (e.g. NLTmpMnt mount points)
+# Log cleanup - Logs to be cleared during htis step (e.g. NLTmpMnt mount points)
 $logsToClear = @(
     # Standard Windows Logs
     'Application',
@@ -118,7 +229,7 @@ $logsToClear = @(
     'Microsoft-Windows-Application-Experience/Program-Telemetry'
 )
 
-# Configurable skip patterns to avoid removing mounted images, reparse points and other special folders
+# Path cleanup - Configurable skip patterns to avoid removing mounted images, reparse points and other special folders
 $skipPathPatterns = @(
     # OneDrive and sync caches
     '(?i)\\Microsoft\\OneDrive\\',
@@ -179,6 +290,7 @@ $skipPathPatterns = @(
 # Intentionally reference configuration variables to satisfy static analysers when unused in some code paths.
 # These are consumed by Test-IsSkipPath; keep a no-op reference to avoid false positives from linters.
 $null = $skipPathPatterns
+
 # endregion
 
 # region 0D - Functions
@@ -191,29 +303,84 @@ function Write-CustomMessage {
     $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
     $logEntry = "$timestamp - $Level - $Message"
     try {
-        # Append to temporary log (do not remove original main log here)
-        Add-Content -Path $tempLogFile -Value $logEntry -ErrorAction SilentlyContinue
-        # Host output behaviour depends on the chosen Verbosity parameter
-        switch ($Verbosity) {
-            'Verbose' {
-                # Verbose users should see verbose output.
-                Write-Verbose $logEntry
-                # Explicitly set InformationAction so behaviour is explicit and analyzer-friendly
-                Write-Information -MessageData $logEntry -InformationAction Continue
+        $tempLogPath = $null
+        $mainLogPath = $null
+        if (-not [string]::IsNullOrWhiteSpace($tempLogFile)) { $tempLogPath = $tempLogFile }
+        if (-not [string]::IsNullOrWhiteSpace($logFile)) { $mainLogPath = $logFile }
+
+        # Flush any buffered verbose messages that occurred before logging helpers were in place.
+        if ($script:VerboseBuffer -and $script:VerboseBuffer.Count -gt 0) {
+            foreach ($vb in $script:VerboseBuffer) {
+                $vbEntry = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - INFO - $vb"
+                if ($tempLogPath -and (Test-Path -Path $tempLogPath)) { Add-Content -Path $tempLogPath -Value $vbEntry -ErrorAction SilentlyContinue }
+                elseif ($mainLogPath) { Add-Content -Path $mainLogPath -Value $vbEntry -ErrorAction SilentlyContinue }
             }
-            'Normal' {
-                # For interactive Normal mode, allow information to be written to host explicitly
-                Write-Information -MessageData $logEntry -InformationAction Continue
+            $script:VerboseBuffer = @()
+        }
+        # Always append a canonical entry to the temporary log first when present. If the temp log has
+        # already been removed (for example during consolidation), fall back to appending into the main
+        # log so messages are not lost.
+        if ($tempLogPath -and (Test-Path -Path $tempLogPath)) {
+            Add-Content -Path $tempLogPath -Value $logEntry -ErrorAction SilentlyContinue
+        }
+        elseif ($mainLogPath) {
+            # Ensure main log directory exists
+            try {
+                $mainLogDirectory = Split-Path -Path $mainLogPath -Parent
+                if ($mainLogDirectory -and -not (Test-Path -Path $mainLogDirectory)) { New-Item -Path $mainLogDirectory -ItemType Directory -Force | Out-Null }
             }
-            default {
-                # In 'Silent' mode send information to the Information stream but do not display it
-                Write-Information -MessageData $logEntry -InformationAction SilentlyContinue
+            catch {}
+            Add-Content -Path $mainLogPath -Value $logEntry -ErrorAction SilentlyContinue
+        }
+
+        # Emit minimal host output only when explicitly running in Verbose mode.
+        if ($Verbosity -eq 'Verbose') {
+            # Call the original Write-Verbose cmdlet directly to avoid any wrapper recursion
+            & Microsoft.PowerShell.Utility\Write-Verbose -Message $logEntry
+        }
+
+        # When running a DryRun, surface a concise, non-PII host-visible summary for
+        # important messages so interactive users know what the script would do.
+        try {
+            if ($DryRun) {
+                $hostShow = $false
+                # Always show explicit DRYRUN lines or "Would ..." style messages
+                if ($Message -match '^DRYRUN:' -or $Message -match '\bWould\b' -or $Message -match '\bWould delete\b' -or $Message -match '\bWould remove\b') { $hostShow = $true }
+                # Also surface high-level summaries and probe results during DryRun
+                if ($Message -match 'Deleted \d+ items' -or $Message -match 'Skipped \d+ items' -or $Message -match 'Probe delta' -or $Message -match 'Initial free space' -or $Message -match '^Estimate:') { $hostShow = $true }
+                if ($hostShow) { Write-Output ("DRYRUN: {0}" -f $Message) }
             }
+        }
+        catch {
+            # Non-fatal - fail silently to avoid hiding the real log behaviour
         }
     }
     catch {
-        # Best-effort: if temp log can't be written, write a verbose message
+        # Best-effort: if temp log can't be written, surface a verbose diagnostic (won't be sent to Intune in normal mode)
         Write-Verbose "Failed to write to temporary log file: $_"
+    }
+}
+
+# Wrapper for the built-in Write-Verbose to ensure verbose messages are also
+# recorded into the temporary run log. This captures diagnostic output that
+# would otherwise only appear on the host stream and not in the temp/archive
+# logs. The wrapper calls the original cmdlet by fully-qualifying its module
+# path to avoid recursion.
+function Write-Verbose {
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline = $true, Position = 0)]
+        [string]$Message
+    )
+    process {
+        try {
+            if ($Message) { Write-CustomMessage -Message $Message -Level INFO }
+        }
+        catch {
+            # Non-fatal: fall through to emit host verbose output
+        }
+        # Call the original cmdlet directly to preserve host/verbosity semantics
+        & Microsoft.PowerShell.Utility\Write-Verbose -Message $Message
     }
 }
 
@@ -265,8 +432,10 @@ function Merge-Log {
 
                 $destSize = (Get-Item -Path $logFile -ErrorAction SilentlyContinue).Length
                 if ($destSize -gt 0) {
-                    if (-not $DryRun) { Remove-Item -Path $tempLogFile -Force -ErrorAction Stop }
+                    if (-not $DryRun -and -not $PreserveTempLog) { Remove-Item -Path $tempLogFile -Force -ErrorAction Stop }
                     Write-CustomMessage "Temporary log file successfully merged into $logFile"
+                    # ensure per-run archive placeholder is reset; Save-MainLogArchive will set it when archiving
+                    $script:LastPerRunArchive = $null
                     return $true
                 }
                 else {
@@ -422,35 +591,7 @@ function Clear-BrowserCache {
     We only remove cache directories and avoid touching user profiles or settings.
     #>
     try {
-        if ($env:SKIP_SLOW_IO) {
-            Write-CustomMessage "SKIP_SLOW_IO set: Skipping browser cache enumeration for tests." -Level INFO
-            return
-        }
-        # Enumerate profiles under C:\Users (skips some system accounts implicitly)
-        $userFolders = Get-ChildItem -Path 'C:\Users' -Directory -ErrorAction SilentlyContinue
-        foreach ($userFolder in $userFolders) {
-            $localAppData = Join-Path -Path $userFolder.FullName -ChildPath 'AppData\Local'
-
-            $browserPaths = @(
-                (Join-Path -Path $localAppData -ChildPath 'Google\Chrome\User Data\Default\Cache'),
-                (Join-Path -Path $localAppData -ChildPath 'Microsoft\Edge\User Data\Default\Cache'),
-                (Join-Path -Path $localAppData -ChildPath 'Mozilla\Firefox\Profiles')
-            )
-
-            foreach ($bp in $browserPaths) {
-                if (-not (Test-Path -Path $bp)) { continue }
-                Write-CustomMessage "Clearing browser cache at: $bp"
-                # Pruned walk to avoid entering excluded branches
-                Get-SafeChildItems -Path $bp | ForEach-Object {
-                    if (Test-IsProtectedPath -PathToTest $_.FullName) { continue }
-                    try {
-                        if ($DryRun) { Write-CustomMessage "DRYRUN: Would delete browser cache item: $($_.FullName)" }
-                        else { Remove-Item -Path $_.FullName -Recurse -Force -ErrorAction Stop; Write-CustomMessage "Deleted browser cache item: $($_.FullName)" }
-                    }
-                    catch { Write-CustomMessage "WARNING: Failed to delete browser cache item $($_.FullName): $($_.Exception.Message)" }
-                }
-            }
-        }
+        Clear-BrowserCacheAllUsers
     }
     catch {
         Write-CustomMessage "ERROR: Failed to clear browser caches. $_"
@@ -503,16 +644,41 @@ function Get-ProbeSnapshot {
 # Helper: estimate Recycle Bin size via Shell.Application (falls back to 0 if not available)
 function Get-RecycleBinSize {
     try {
-        $shell = New-Object -ComObject Shell.Application
-        $recycle = $shell.Namespace(0xA)
-        if (-not $recycle) { return 0 }
-        $sizeObj = $recycle.ExtendedProperty('Size') 2>$null
-        if ($sizeObj -and ($sizeObj -as [long])) { return [int64]$sizeObj }
-        # Fallback: enumerate known Recycle Bin structure per-user
-        return 0
+        # Attempt COM approach first; this may not be available under SYSTEM or constrained hosts
+        try {
+            $shell = New-Object -ComObject Shell.Application
+            $recycle = $shell.Namespace(0xA)
+            if ($recycle) {
+                $sizeObj = $recycle.ExtendedProperty('Size') 2>$null
+                if ($sizeObj) {
+                    [int64]$size = 0
+                    if ([Int64]::TryParse($sizeObj.ToString(), [ref]$size)) { return $size }
+                }
+            }
+        }
+        catch {
+            Write-Verbose "COM RecycleBin size query failed: $_"
+        }
+
+        # Fallback: enumerate per-user recycle bin folders (best-effort). This is conservative and may under-report.
+        $total = [int64]0
+        try {
+            $users = Get-ChildItem -Path 'C:\Users' -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -notin @('Default', 'Default User', 'Public', 'All Users') }
+            foreach ($u in $users) {
+                try {
+                    $rbPath = Join-Path -Path $u.FullName -ChildPath '$Recycle.Bin'
+                    if (-not (Test-Path -Path $rbPath)) { continue }
+                    Get-ChildItem -Path $rbPath -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object { $total += ([int64]($_.Length -as [int64])) }
+                }
+                catch { Write-Verbose "RecycleBin fallback enumeration failed for $($u.FullName): $_" }
+            }
+        }
+        catch { Write-Verbose "RecycleBin fallback enumeration failed: $_" }
+
+        return $total
     }
     catch {
-        Write-Verbose "Get-RecycleBinSize failed: $_"
+        Write-Verbose "Get-RecycleBinSize encountered an unexpected error: $_"
         return 0
     }
 }
@@ -561,22 +727,7 @@ function Clear-SoftwareDistributionDownload {
     This is a non-rebooting clean: we only remove files from the Download folder and skip archive/log paths.
     #>
     try {
-        if ($env:SKIP_SLOW_IO) {
-            Write-CustomMessage "SKIP_SLOW_IO set: Skipping SoftwareDistribution enumeration." -Level INFO
-            return
-        }
-        $sdPath = Join-Path -Path $env:SystemRoot -ChildPath 'SoftwareDistribution\Download'
-        if (-not (Test-Path -Path $sdPath)) { Write-CustomMessage "No SoftwareDistribution Download folder found at $sdPath"; return }
-        Write-CustomMessage "Clearing Windows Update download cache at: $sdPath"
-        # Use pruned enumerator to avoid traversing skip/protected branches
-        Get-SafeChildItems -Path $sdPath | ForEach-Object {
-            if (Test-IsProtectedPath -PathToTest $_.FullName) { continue }
-            try {
-                if ($DryRun) { Write-CustomMessage "DRYRUN: Would delete update download item: $($_.FullName)" }
-                else { Remove-Item -Path $_.FullName -Recurse -Force -ErrorAction Stop; Write-CustomMessage "Deleted update download item: $($_.FullName)" }
-            }
-            catch { Write-CustomMessage "WARNING: Could not delete update download item $($_.FullName): $($_.Exception.Message)" }
-        }
+        Clear-WindowsUpdateDownloadCache
     }
     catch {
         Write-CustomMessage "ERROR: Failed to clear SoftwareDistribution download folder. $_"
@@ -754,6 +905,189 @@ function Invoke-WithRetry {
     }
 }
 
+function Get-UserProfileCleanupCandidates {
+    <#
+    Enumerate stale user profiles using Win32_UserProfile so cleanup removes both
+    filesystem content and profile registration metadata.
+    #>
+    [CmdletBinding()]
+    [OutputType('System.Object[]')]
+    param(
+        [int]$RetentionDays = $userProfileRetentionDays
+    )
+
+    $cutoffDate = (Get-Date).AddDays(-$RetentionDays)
+    $profilesRoot = ([IO.Path]::GetFullPath((Join-Path -Path $env:SystemDrive -ChildPath 'Users'))).TrimEnd('\')
+    $excludedProfileNames = @('Administrator', 'All Users', 'Default', 'Default User', 'defaultuser0', 'Public', 'WDAGUtilityAccount')
+    $candidates = New-Object System.Collections.Generic.List[object]
+
+    try {
+        $profiles = Get-CimInstance -ClassName Win32_UserProfile -ErrorAction Stop
+    }
+    catch {
+        Write-CustomMessage ("ERROR: Failed to enumerate Win32_UserProfile instances. {0}" -f $_.Exception.Message)
+        return @()
+    }
+
+    foreach ($userProfile in $profiles) {
+        try {
+            if (-not $userProfile.LocalPath) { continue }
+
+            $resolvedPath = ([IO.Path]::GetFullPath($userProfile.LocalPath)).TrimEnd('\\')
+            if (-not $resolvedPath.StartsWith($profilesRoot, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+
+            $profileName = Split-Path -Path $resolvedPath -Leaf
+            if ($profileName -in $excludedProfileNames) { continue }
+            if ($userProfile.Special -or $userProfile.Loaded) { continue }
+
+            $refCount = 0
+            if ($null -ne $userProfile.RefCount) { $refCount = [int]$userProfile.RefCount }
+            if ($refCount -gt 0) { continue }
+
+            $lastUseTime = $null
+            if ($userProfile.LastUseTime) {
+                try { $lastUseTime = [datetime]$userProfile.LastUseTime } catch { $lastUseTime = $null }
+            }
+
+            if (-not $lastUseTime) {
+                Write-CustomMessage ("Skipping user profile with no LastUseTime metadata: {0}" -f $resolvedPath) -Level WARN
+                continue
+            }
+
+            if ($lastUseTime -ge $cutoffDate) { continue }
+
+            $candidates.Add([pscustomobject]@{
+                    CimInstance = $userProfile
+                    LocalPath   = $resolvedPath
+                    ProfileName = $profileName
+                    SID         = $userProfile.SID
+                    LastUseTime = $lastUseTime
+                    RefCount    = $refCount
+                }) | Out-Null
+        }
+        catch {
+            Write-CustomMessage ("WARNING: Failed to assess candidate user profile {0}. {1}" -f $userProfile.LocalPath, $_.Exception.Message) -Level WARN
+        }
+    }
+
+    return @($candidates | Sort-Object -Property LastUseTime, LocalPath)
+}
+
+function Invoke-OldUserProfileCleanup {
+    <#
+    Remove stale user profiles via Win32_UserProfile so registry and profile state
+    are cleaned up together with on-disk content.
+    #>
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    [OutputType('System.Collections.Hashtable')]
+    param(
+        [int]$RetentionDays = $userProfileRetentionDays
+    )
+
+    $candidates = @(Get-UserProfileCleanupCandidates -RetentionDays $RetentionDays)
+    $summary = @{
+        CandidateCount   = $candidates.Count
+        WouldRemoveCount = 0
+        RemovedCount     = 0
+        SkippedCount     = 0
+        FailedCount      = 0
+    }
+
+    if ($candidates.Count -eq 0) {
+        Write-CustomMessage ("No removable user profiles were identified using Win32_UserProfile older than {0} days." -f $RetentionDays)
+        return $summary
+    }
+
+    foreach ($candidate in $candidates) {
+        $targetDescription = "{0} (SID={1}; LastUseTime={2})" -f $candidate.LocalPath, $candidate.SID, ($candidate.LastUseTime.ToString('yyyy-MM-dd HH:mm:ss'))
+
+        if ($DryRun) {
+            Write-CustomMessage ("DRYRUN: Would remove user profile via Win32_UserProfile: {0}" -f $targetDescription)
+            $summary.WouldRemoveCount++
+            continue
+        }
+
+        if ($PSCmdlet -and -not $PSCmdlet.ShouldProcess($candidate.LocalPath, 'Remove stale user profile')) {
+            Write-CustomMessage ("Skipped user profile removal because ShouldProcess declined: {0}" -f $targetDescription) -Level INFO
+            $summary.SkippedCount++
+            continue
+        }
+
+        try {
+            Invoke-WithRetry -MaxRetries 2 -RetryDelay 2 -ScriptBlock {
+                Remove-CimInstance -InputObject $candidate.CimInstance -ErrorAction Stop
+                return $true
+            } | Out-Null
+            Write-CustomMessage ("Removed user profile via Win32_UserProfile: {0}" -f $targetDescription)
+            $summary.RemovedCount++
+        }
+        catch {
+            Write-CustomMessage ("ERROR: Failed to remove user profile via Win32_UserProfile: {0}. {1}" -f $targetDescription, $_.Exception.Message)
+            $summary.FailedCount++
+        }
+    }
+
+    if ($DryRun) {
+        Write-CustomMessage ("User profile cleanup dry run completed. CandidateCount={0}; WouldRemoveCount={1}; SkippedCount={2}; FailedCount={3}" -f $summary.CandidateCount, $summary.WouldRemoveCount, $summary.SkippedCount, $summary.FailedCount)
+    }
+    else {
+        Write-CustomMessage ("User profile cleanup completed. CandidateCount={0}; RemovedCount={1}; SkippedCount={2}; FailedCount={3}" -f $summary.CandidateCount, $summary.RemovedCount, $summary.SkippedCount, $summary.FailedCount)
+    }
+
+    return $summary
+}
+
+function Set-CleanMgrCategories {
+    <#
+    Configure the requested CleanMgr VolumeCaches categories in one place so both the
+    standard flow and CleanMgrOnly mode use the same gating and dry-run semantics.
+    #>
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    [OutputType('System.Collections.Hashtable')]
+    param(
+        [string[]]$Types = $cleanupTypeSelection
+    )
+
+    $summary = @{
+        ConfiguredCount     = 0
+        MissingCount        = 0
+        WouldConfigureCount = 0
+        FailedCount         = 0
+    }
+
+    foreach ($keyName in $Types) {
+        $keyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\$keyName"
+        if (-not (Test-Path $keyPath)) {
+            Write-CustomMessage ("Skipped missing CleanMgr category: {0}." -f $keyName)
+            $summary.MissingCount++
+            continue
+        }
+
+        if ($DryRun) {
+            Write-CustomMessage ("DRYRUN: Would configure CleanMgr category: {0}" -f $keyName)
+            $summary.WouldConfigureCount++
+            continue
+        }
+
+        if ($PSCmdlet -and -not $PSCmdlet.ShouldProcess($keyPath, 'Set StateFlags0001 to 2')) {
+            Write-CustomMessage ("Skipped CleanMgr configuration because ShouldProcess declined: {0}" -f $keyName) -Level INFO
+            continue
+        }
+
+        try {
+            Set-ItemProperty -Path $keyPath -Name 'StateFlags0001' -Value 2 -Force -ErrorAction Stop
+            Write-CustomMessage ("Configured CleanMgr for {0}." -f $keyName)
+            $summary.ConfiguredCount++
+        }
+        catch {
+            Write-CustomMessage ("ERROR: Failed to configure CleanMgr for {0}. {1}" -f $keyName, $_.Exception.Message)
+            $summary.FailedCount++
+        }
+    }
+
+    return $summary
+}
+
 # Helper: Remove an item with retry/backoff, timing and protected-path safety
 function Invoke-RemoveWithRetry {
     param(
@@ -794,6 +1128,15 @@ function Invoke-RemoveWithRetry {
     }
     # If running under test harness, reduce retries/backoff to make tests fast
     if ($env:SKIP_SLOW_IO) { $MaxRetries = 1; $RetryDelaySeconds = 0 }
+
+    # Honor DryRun: do not perform destructive actions, log what would have been done.
+    if ($DryRun) {
+        try {
+            Write-CustomMessage ("DRYRUN: Would remove {0} (Invoke-RemoveWithRetry)" -f $Path) -Level INFO
+        }
+        catch { Write-Verbose "DryRun log failed for Invoke-RemoveWithRetry: $_" }
+        return $true
+    }
 
     $attempt = 0
     $start = Get-Date
@@ -881,6 +1224,8 @@ function Save-MainLogArchive {
                 # Recreate an empty main log to preserve path
                 New-Item -Path $MainLogPath -ItemType File -Force | Out-Null
                 Write-CustomMessage "Moved main log to per-run archive: $perRunArchive and recreated main log path: $MainLogPath"
+                # record the per-run archive path so callers can surface it to the host
+                $script:LastPerRunArchive = $perRunArchive
                 return $true
             }
             catch {
@@ -891,6 +1236,7 @@ function Save-MainLogArchive {
                     # Truncate the main log while preserving the file path to avoid breaking handles
                     Set-Content -Path $MainLogPath -Value @() -ErrorAction Stop
                     Write-CustomMessage "Archived main log to fallback archive $ArchivePath and truncated main log at $MainLogPath"
+                    $script:LastPerRunArchive = $ArchivePath
                     return $true
                 }
                 catch {
@@ -965,27 +1311,39 @@ function Test-PendingReboot {
 
 # Wrapper that decides whether to run DISM based on pending reboot state and the new -ForceDISMWhenPending flag.
 function Invoke-DISM-Safe {
-    param(
-        [switch]$WhatIf
-    )
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    [OutputType('System.Collections.Hashtable')]
+    param()
 
-    # If a pending reboot is detected, only proceed when ForceDISMWhenPending is explicitly set.
+    # If a pending reboot is detected, only proceed when either the parameter
+    # switch (-ForceDISMWhenPending) or the preference ($Pref_ForceDISMWhenPendingOverride)
+    # is set. This gives callers (or automation) a way to opt-in to forced DISM runs.
     if (Test-PendingReboot) {
-        if (-not $ForceDISMWhenPending) {
-            Write-CustomMessage "Pending reboot detected; skipping DISM cleanup unless -ForceDISMWhenPending is specified." -Level WARN
+        if (-not $ForceDISMWhenPending -and -not $Pref_ForceDISMWhenPendingOverride) {
+            Write-CustomMessage "Pending reboot detected; skipping DISM cleanup unless -ForceDISMWhenPending parameter or Pref_ForceDISMWhenPendingOverride is set." -Level WARN
             return @{ Ran = $false; Reason = 'PendingReboot' }
         }
         else {
-            Write-CustomMessage "Pending reboot detected but proceeding with DISM because -ForceDISMWhenPending was set." -Level WARN
+            Write-CustomMessage "Pending reboot detected but proceeding with DISM because ForceDISMWhenPending was specified (parameter or preference)." -Level WARN
         }
     }
 
-    if ($WhatIf -or $DryRun) {
+    # Respect DryRun mode or native ShouldProcess support
+    $whatIfRequested = $false
+    if ($PSBoundParameters.ContainsKey('WhatIf')) { $whatIfRequested = $true }
+    if ($whatIfRequested -or $DryRun) {
         Write-CustomMessage "DRYRUN/WhatIf: Would run DISM /Online /Cleanup-Image /StartComponentCleanup" -Level INFO
         return @{ Ran = $false; Reason = 'DryRun' }
     }
+    if ($PSCmdlet -and -not $PSCmdlet.ShouldProcess('DISM component store', 'StartComponentCleanup')) {
+        Write-CustomMessage "ShouldProcess declined: skipping DISM component store cleanup." -Level INFO
+        return @{ Ran = $false; Reason = 'ShouldProcessDeclined' }
+    }
 
     try {
+        Write-CustomMessage "Waiting for any active DISM process to finish before starting cleanup."
+        Wait-ForDISM -TimeoutInSeconds 600
+
         # Revert pending actions first; wrap in Wait-ForDISM to avoid concurrent DISM runs
         try {
             $revert = Start-Process -FilePath 'dism.exe' -ArgumentList '/Online /Cleanup-Image /RevertPendingActions' -NoNewWindow -Wait -PassThru -ErrorAction Stop
@@ -1002,6 +1360,31 @@ function Invoke-DISM-Safe {
     catch {
         Write-CustomMessage ("ERROR: DISM cleanup encountered an exception: {0}" -f $_.Exception.Message)
         return @{ Ran = $false; Error = $_ }
+    }
+}
+
+# Wrapper to run DISM cleanup with logging and error handling. This was previously accidentally
+# pasted into the file header; moved here as a callable helper so the header remains documentation-only.
+function Invoke-DISMCleanup {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    [OutputType('System.Collections.Hashtable')]
+    param()
+
+    try {
+        Write-CustomMessage "Checking for pending operations before DISM cleanup."
+        $dismResult = Invoke-DISM-Safe
+        if ($dismResult.Ran -eq $false) {
+            # Use a descriptive reason instead of a boolean. Avoid -or which returns a boolean in PowerShell.
+            $reasonMsg = if ($dismResult.Reason) { $dismResult.Reason } elseif ($dismResult.Error) { $dismResult.Error } else { 'Unknown' }
+            Write-CustomMessage ("DISM step skipped or dry-run: {0}" -f $reasonMsg)
+        }
+        else {
+            if ($dismResult.ExitCode -eq 0) { Write-CustomMessage "DISM component store cleanup completed successfully." }
+            else { Write-CustomMessage ("ERROR: DISM cleanup failed with exit code {0}." -f $dismResult.ExitCode) }
+        }
+    }
+    catch {
+        Write-CustomMessage (("ERROR: DISM cleanup encountered an exception: {0}" -f $($_.Exception.Message)))
     }
 }
 
@@ -1025,22 +1408,41 @@ function Get-BrowserCachePathsForUser {
 }
 
 function Clear-BrowserCacheAllUsers {
-    param(
-        [switch]$WhatIf
-    )
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    [OutputType('void')]
+    param()
     try {
+        if ($env:SKIP_SLOW_IO) {
+            Write-CustomMessage "SKIP_SLOW_IO set: Skipping browser cache enumeration for tests." -Level INFO
+            return
+        }
         # Enumerate users under C:\Users (skip common system profiles)
         $users = Get-ChildItem -Path 'C:\Users' -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -notin @('Default', 'Default User', 'Public', 'All Users') }
         foreach ($u in $users) {
             $userPath = $u.FullName
             $browserPaths = Get-BrowserCachePathsForUser -UserProfilePath $userPath
             foreach ($bp in $browserPaths) {
-                if (-not (Test-Path -Path $bp)) { continue }
+                try {
+                    if (-not (Test-Path -Path $bp -ErrorAction Stop)) { continue }
+                }
+                catch [System.UnauthorizedAccessException] {
+                    Write-CustomMessage ("Skipping inaccessible browser cache path: {0}" -f $bp) -Level WARN
+                    continue
+                }
+                catch {
+                    Write-CustomMessage ("Skipping browser cache path due to probe failure: {0}. {1}" -f $bp, $_) -Level WARN
+                    continue
+                }
                 Write-CustomMessage "Processing browser cache path: $bp"
                 Get-SafeChildItems -Path $bp | ForEach-Object {
                     if (Test-IsProtectedPath -PathToTest $_.FullName) { Write-CustomMessage "Skipping protected browser cache entry: $($_.FullName)"; return }
-                    if ($WhatIf -or $DryRun) { Write-CustomMessage "DRYRUN: Would remove browser cache item: $($_.FullName)" }
-                    else { Invoke-RemoveWithRetry -Path $_.FullName -MaxRetries 2 -RetryDelaySeconds 1 }
+                    $whatIfRequested = $false
+                    if ($PSBoundParameters.ContainsKey('WhatIf')) { $whatIfRequested = $PSBoundParameters['WhatIf'] }
+                    if ($whatIfRequested -or $DryRun) { Write-CustomMessage "DRYRUN: Would remove browser cache item: $($_.FullName)" }
+                    else {
+                        if ($PSCmdlet -and -not $PSCmdlet.ShouldProcess($_.FullName, 'Remove browser cache item')) { Write-CustomMessage "ShouldProcess declined for: $($_.FullName)"; return }
+                        Invoke-RemoveWithRetry -Path $_.FullName -MaxRetries 2 -RetryDelaySeconds 1
+                    }
                 }
             }
         }
@@ -1055,11 +1457,18 @@ function Clear-WindowsUpdateDownloadCache {
     This is safe and non-rebooting.
     #>
     try {
+        if ($env:SKIP_SLOW_IO) {
+            Write-CustomMessage "SKIP_SLOW_IO set: Skipping Windows Update download cache enumeration." -Level INFO
+            return
+        }
         $wuDownload = Join-Path -Path $env:windir -ChildPath 'SoftwareDistribution\Download'
         if (Test-Path $wuDownload) {
             # Use pruned file-only enumeration to avoid traversing excluded branches
             Get-SafeChildItems -Path $wuDownload -FilesOnly | ForEach-Object {
-                try { Remove-Item -Path $_.FullName -Force -ErrorAction Stop; Write-CustomMessage ("Removed Windows Update download file: {0}" -f $_.FullName) }
+                try {
+                    if ($DryRun) { Write-CustomMessage ("DRYRUN: Would remove Windows Update download file: {0}" -f $_.FullName) }
+                    else { Invoke-RemoveWithRetry -Path $_.FullName -MaxRetries 3 -RetryDelaySeconds 2; Write-CustomMessage ("Removed Windows Update download file: {0}" -f $_.FullName) }
+                }
                 catch { Write-CustomMessage ("WARNING: Could not remove update download file {0}: {1}" -f $_.FullName, $($_.Exception.Message)) }
             }
         }
@@ -1085,7 +1494,6 @@ if (-not $tempLogSizeThresholdMB) { $tempLogSizeThresholdMB = 50 }
 if (-not $tempLogAgeDays) { $tempLogAgeDays = 7 }
 if (-not $MaxCleanupDurationMinutes) { $MaxCleanupDurationMinutes = 10 }
 if (-not $Verbosity) { $Verbosity = 'Silent' }
-if (-not ($DryRun -is [bool])) { $DryRun = $false }
 
 # Temporary log file for script execution (single file)
 $tempLogFile = Join-Path -Path $env:TEMP -ChildPath "${scriptName}_temp.log"
@@ -1272,6 +1680,7 @@ catch {
 # endregion
 
 # region 0F - Main Script Logic summary
+
 # Group related sections together
 
 # Order of operations
@@ -1292,6 +1701,7 @@ catch {
 # 7. Cleanmgr
 #      a) Prepare registry
 #      b) Run cleanmgr
+#      c) Remove windows.old
 # 8. Final clean up
 #      a) Ensure final disk space information is rendered
 #      c) Resolve log export failures
@@ -1302,12 +1712,27 @@ catch {
 #      i) Enhanced error handling for Move-Item
 #      j) Handle access denied errors in Get-ChildItem
 #      k) Improve log export handling
+# endregion
 
+# region 0G - Start the script
 Write-CustomMessage "Intune free space remediation script"
 Write-CustomMessage "===================================="
 Write-CustomMessage ""
 Write-CustomMessage "Commencing script"
 Write-CustomMessage ""
+
+# Capture an initial probe snapshot and free space for later DryRun summaries.
+try {
+    $global:__InitialProbePaths = @(
+        "$env:TEMP",
+        "C:\Windows\Temp",
+        "$env:SystemRoot\SoftwareDistribution\Download",
+        "$env:SystemRoot\\Downloaded Program Files"
+    )
+    try { $global:__PreSnapshot = Get-ProbeSnapshot -PathsToProbe $global:__InitialProbePaths -IgnorePrune } catch { $global:__PreSnapshot = @{} }
+    try { $global:__InitialFreeSpace = (Get-PSDrive -Name C).Free } catch { $global:__InitialFreeSpace = $null }
+}
+catch { Write-Verbose "Failed to capture initial probes: $_" }
 
 # If -Estimate is requested, run size-only probes for common categories and exit
 if ($Estimate) {
@@ -1349,7 +1774,7 @@ if ($Estimate) {
     catch { Write-Verbose "RecycleBin estimate failed: $_" }
     Write-CustomMessage "ESTIMATE mode complete. No destructive actions performed."
     # Merge logs and exit gracefully
-    try { Merge-Log | Out-Null } catch {}
+    try { Merge-Log | Out-Null } catch { Write-Verbose "Merge-Log failed during estimate/cleanup exit: $_" }
     exit 0
 }
 
@@ -1368,26 +1793,37 @@ if ($CleanMgrOnly) {
 
     try { $preSnapshot = Get-ProbeSnapshot -PathsToProbe $probePaths -IgnorePrune } catch { $preSnapshot = @{} }
 
-    # Invoke registry preparation logic if present: try to find function or inline logic
-    try {
-        if (Get-Command -Name 'Prepare-CleanMgrCategories' -ErrorAction SilentlyContinue) {
-            Prepare-CleanMgrCategories -Types $cleanupTypeSelection -ErrorAction SilentlyContinue
-        }
-        else {
-            # Fallback: attempt to set StateFlags0001 for known VolumeCaches keys using existing code path if present
-            Write-CustomMessage "No Prepare-CleanMgrCategories helper found; proceeding to invoke CleanMgr directly after diagnostic." -Level INFO
-        }
+    if (-not $Pref_CleanMgrPrep) {
+        Write-CustomMessage "SKIPPED: CleanMgr registry preparation disabled by Pref_CleanMgrPrep." -Level INFO
     }
-    catch { Write-CustomMessage "WARNING: CleanMgr preparation encountered an issue: $_" }
+    else {
+        try {
+            Set-CleanMgrCategories -Types $cleanupTypeSelection | Out-Null
+        }
+        catch { Write-CustomMessage "WARNING: CleanMgr preparation encountered an issue: $_" }
+    }
 
-    # Invoke CleanMgr
+    # Invoke CleanMgr (respect DryRun / WhatIf / ShouldProcess)
     try {
-        if (Test-Path $cleanMgrPath) {
-            Write-CustomMessage "Invoking CleanMgr to apply configured categories (/sagerun:1)."
-            $proc = Start-Process -FilePath $cleanMgrPath -ArgumentList '/sagerun:1' -NoNewWindow -Wait -PassThru -ErrorAction SilentlyContinue
-            if ($proc -and $proc.ExitCode -eq 0) { Write-CustomMessage "CleanMgr completed with exit code 0." }
-            elseif ($proc) { Write-CustomMessage ("WARNING: CleanMgr returned exit code {0}." -f $proc.ExitCode) -Level WARN }
-            else { Write-CustomMessage "WARNING: CleanMgr did not start successfully." -Level WARN }
+        if (-not $Pref_RunCleanMgr) {
+            Write-CustomMessage "SKIPPED: CleanMgr run disabled by Pref_RunCleanMgr." -Level INFO
+        }
+        elseif (Test-Path $cleanMgrPath) {
+            $whatIfRequested = $false
+            if ($PSBoundParameters.ContainsKey('WhatIf')) { $whatIfRequested = $true }
+            if ($whatIfRequested -or $DryRun) {
+                Write-CustomMessage "DRYRUN: Would invoke CleanMgr to apply configured categories (/sagerun:1)." -Level INFO
+            }
+            elseif ($PSCmdlet -and -not $PSCmdlet.ShouldProcess($cleanMgrPath, 'Run cleanmgr /sagerun:1')) {
+                Write-CustomMessage "ShouldProcess declined: skipping CleanMgr run." -Level INFO
+            }
+            else {
+                Write-CustomMessage "Invoking CleanMgr to apply configured categories (/sagerun:1)."
+                $proc = Start-Process -FilePath $cleanMgrPath -ArgumentList '/sagerun:1' -NoNewWindow -Wait -PassThru -ErrorAction SilentlyContinue
+                if ($proc -and $proc.ExitCode -eq 0) { Write-CustomMessage "CleanMgr completed with exit code 0." }
+                elseif ($proc) { Write-CustomMessage (("WARNING: CleanMgr returned exit code {0}." -f $proc.ExitCode)) -Level WARN }
+                else { Write-CustomMessage "WARNING: CleanMgr did not start successfully." -Level WARN }
+            }
         }
         else { Write-CustomMessage "WARNING: cleanmgr.exe not found at expected path: $cleanMgrPath" -Level WARN }
     }
@@ -1400,8 +1836,8 @@ if ($CleanMgrOnly) {
             $preObj = $null; $postObj = $null
             if ($preSnapshot.ContainsKey($p)) { $preObj = $preSnapshot[$p] }
             if ($postSnapshot.ContainsKey($p)) { $postObj = $postSnapshot[$p] }
-            $preBytes = ($null -ne $preObj) ? [int64]$preObj.Bytes : 0
-            $postBytes = ($null -ne $postObj) ? [int64]$postObj.Bytes : 0
+            if ($null -ne $preObj) { $preBytes = [int64]$preObj.Bytes } else { $preBytes = 0 }
+            if ($null -ne $postObj) { $postBytes = [int64]$postObj.Bytes } else { $postBytes = 0 }
             $delta = $preBytes - $postBytes
             $deltaMB = [math]::Round($delta / 1MB, 2)
             $deltaGB = [math]::Round($delta / 1GB, 2)
@@ -1410,10 +1846,9 @@ if ($CleanMgrOnly) {
     }
     catch { Write-CustomMessage "WARNING: Failed to compute probe deltas: $_" }
 
-    try { Merge-Log | Out-Null } catch {}
+    try { Merge-Log | Out-Null } catch { Write-Verbose "Merge-Log failed during CleanMgrOnly exit: $_" }
     Write-CustomMessage "CLEANMGR-ONLY mode complete. Exiting."; exit 0
 }
-
 # endregion
 
 # region 1 - Get and display initial disk space
@@ -1424,237 +1859,210 @@ Write-CustomMessage "Initial free space: $freeSpaceGB GB ($([math]::Round($freeS
 # endregion
 
 # region 2A - Remove old user profiles
-try {
-    Write-CustomMessage "Checking for user profiles not used in the last $userProfileRetentionDays days."
-
-    # Get the current date and calculate the cutoff date
-    $cutoffDate = (Get-Date).AddDays(-$userProfileRetentionDays)
-
-    # Get all user profiles from the Users folder
-    $userProfiles = Get-ChildItem -Path "C:\Users" -Directory | Where-Object {
-        $_.Name -notin @('Default', 'Default User', 'Public', 'All Users') -and
-        $_.PSIsContainer -and
-        (Get-ItemProperty -Path $_.FullName).LastWriteTime -lt $cutoffDate
-    }
-
-    foreach ($userProfile in $userProfiles) {
-        try {
-            Write-CustomMessage "Removing user profile: $($userProfile.Name) (Last modified: $($userProfile.LastWriteTime))"
-            Remove-Item -Path $userProfile.FullName -Recurse -Force -ErrorAction Stop
-            Write-CustomMessage "Successfully removed user profile: $($userProfile.Name)"
-        }
-        catch {
-            Write-CustomMessage "ERROR: Failed to remove user profile: $($userProfile.Name). $_"
-        }
-    }
-
-    Write-CustomMessage "User profile cleanup completed."
+if (-not $Pref_RemoveOldUserProfiles) {
+    Write-CustomMessage "SKIPPED: Remove old user profiles is disabled via preferences (Pref_RemoveOldUserProfiles=$Pref_RemoveOldUserProfiles)." -Level INFO
 }
-catch {
-    Write-CustomMessage "ERROR: Failed to clean up old user profiles. $_"
+else {
+    try {
+        Write-CustomMessage "Checking for stale Win32_UserProfile entries older than $userProfileRetentionDays days."
+        Invoke-OldUserProfileCleanup -RetentionDays $userProfileRetentionDays | Out-Null
+    }
+    catch {
+        Write-CustomMessage "ERROR: Failed to clean up old user profiles. $_"
+    }
 }
 # endregion
 
 # region 2B - Additional non-rebooting cleanup (OneDrive, Browser caches)
-try {
-    Write-CustomMessage "Starting additional non-rebooting cleanup steps: OneDrive cache, and browser caches"
-
-    # Per-user OneDrive caches (safe removals)
-    Clear-OneDriveUserCache
-
-    # Browser caches (Edge/Chrome/Firefox) per-user
-    Clear-BrowserCache
-
-    Write-CustomMessage "Additional non-rebooting cleanup completed: OneDrive cache, and browser caches."
+if (-not $Pref_OneDriveAndBrowserCache) {
+    Write-CustomMessage "SKIPPED: OneDrive and browser cache cleanup disabled via Pref_OneDriveAndBrowserCache=$Pref_OneDriveAndBrowserCache." -Level INFO
 }
-catch {
-    Write-CustomMessage ("ERROR: Additional non-rebooting cleanup encountered an error: {0}" -f $_.Exception.Message)
+else {
+    try {
+        Write-CustomMessage "Starting additional non-rebooting cleanup steps: OneDrive cache, and browser caches"
+
+        # Per-user OneDrive caches (safe removals)
+        Clear-OneDriveUserCache
+
+        # Browser caches (Edge/Chrome/Firefox) per-user
+        Clear-BrowserCache
+
+        Write-CustomMessage "Additional non-rebooting cleanup completed: OneDrive cache, and browser caches."
+    }
+    catch {
+        Write-CustomMessage ("ERROR: Additional non-rebooting cleanup encountered an error: {0}" -f $_.Exception.Message)
+    }
 }
 
 ## endregion
 
-# region 3A - Additional non-rebooting cleanup (Delivery Optimization,Windows Update downloads)
-try {
-    Write-CustomMessage "Starting additional non-rebooting cleanup steps: Delivery Optimization, and Windows Update download cache."
-
-    # Delivery Optimization basic cache
-    Clear-DeliveryOptimizationCache
-
-    # Windows Update download cache (SoftwareDistribution\Download)
-    Clear-SoftwareDistributionDownload
-
-    # Additional Delivery Optimization content cleanup
-    Clear-DeliveryOptimizationAdvanced
-
-    Write-CustomMessage "Additional non-rebooting cleanup completed: Delivery Optimization, and Windows Update."
+# region 3A - Additional non-rebooting cleanup (Delivery Optimization, Windows Update downloads)
+if (-not $Pref_DeliveryOptimizationAndWU) {
+    Write-CustomMessage "SKIPPED: Delivery Optimization and Windows Update download cleanup disabled via Pref_DeliveryOptimizationAndWU=$Pref_DeliveryOptimizationAndWU." -Level INFO
 }
-catch {
-    Write-CustomMessage ("ERROR: Additional non-rebooting cleanup encountered an error: {0}" -f $_.Exception.Message)
+else {
+    try {
+        Write-CustomMessage "Starting additional non-rebooting cleanup steps: Delivery Optimization, and Windows Update download cache."
+
+        # Delivery Optimization basic cache
+        Clear-DeliveryOptimizationCache
+
+        # Windows Update download cache (SoftwareDistribution\Download)
+        Clear-SoftwareDistributionDownload
+
+        # Additional Delivery Optimization content cleanup
+        Clear-DeliveryOptimizationAdvanced
+
+        Write-CustomMessage "Additional non-rebooting cleanup completed: Delivery Optimization, and Windows Update."
+    }
+    catch {
+        Write-CustomMessage ("ERROR: Additional non-rebooting cleanup encountered an error: {0}" -f $_.Exception.Message)
+    }
 }
 
 ## endregion
 
 # region 3B - Run Storage Sense
-if (Get-Command -Name Set-StorageSense -ErrorAction SilentlyContinue) {
-    try {
-        Write-CustomMessage "Configuring Storage Sense."
-        Set-StorageSense -Enable $true -ErrorAction Stop
-        Write-CustomMessage "Storage Sense enabled successfully."
-    }
-    catch {
-        Write-CustomMessage "ERROR: Failed to enable Storage Sense. $_"
-    }
+if (-not $Pref_StorageSense) {
+    Write-CustomMessage "SKIPPED: Storage Sense configuration disabled via Pref_StorageSense=$Pref_StorageSense." -Level INFO
 }
 else {
-    Write-CustomMessage "WARNING: Set-StorageSense cmdlet not available. Skipping Storage Sense configuration."
-}
+    if (Get-Command -Name Set-StorageSense -ErrorAction SilentlyContinue) {
+        try {
+            if ($DryRun) {
+                Write-CustomMessage "DRYRUN: Would enable Storage Sense."
+            }
+            else {
+                Write-CustomMessage "Configuring Storage Sense."
+                Set-StorageSense -Enable $true -ErrorAction Stop
+                Write-CustomMessage "Storage Sense enabled successfully."
+            }
+        }
+        catch {
+            Write-CustomMessage "ERROR: Failed to enable Storage Sense. $_"
+        }
+    }
+    else {
+        Write-CustomMessage "WARNING: Set-StorageSense cmdlet not available. Skipping Storage Sense configuration."
+    }
 
-if (Get-Command -Name Set-StorageSenseConfiguration -ErrorAction SilentlyContinue) {
-    try {
-        Write-CustomMessage "Configuring OneDrive content cleanup threshold."
-        Set-StorageSenseConfiguration -DeleteTempFiles $true -ConfigureOneDriveContentCleanupThreshold $oneDriveCleanupThreshold -ErrorAction Stop
-        Write-CustomMessage "OneDrive content cleanup threshold configured successfully."
+    if (Get-Command -Name Set-StorageSenseConfiguration -ErrorAction SilentlyContinue) {
+        try {
+            if ($DryRun) {
+                Write-CustomMessage ("DRYRUN: Would configure Storage Sense temp-file cleanup and OneDrive content cleanup threshold to {0} days." -f $oneDriveCleanupThreshold)
+            }
+            else {
+                Write-CustomMessage "Configuring OneDrive content cleanup threshold."
+                Set-StorageSenseConfiguration -DeleteTempFiles $true -ConfigureOneDriveContentCleanupThreshold $oneDriveCleanupThreshold -ErrorAction Stop
+                Write-CustomMessage "OneDrive content cleanup threshold configured successfully."
+            }
+        }
+        catch {
+            Write-CustomMessage "ERROR: Failed to configure OneDrive content cleanup threshold. $_" -Level Error
+        }
     }
-    catch {
-        Write-CustomMessage "ERROR: Failed to configure OneDrive content cleanup threshold. $_" -Level Error
+    else {
+        Write-CustomMessage "WARNING: Set-StorageSenseConfiguration cmdlet not available. Skipping OneDrive content cleanup configuration."
     }
-}
-else {
-    Write-CustomMessage "WARNING: Set-StorageSenseConfiguration cmdlet not available. Skipping OneDrive content cleanup configuration."
 }
 # endregion
 
 # region 4 - DISM: WinSxS component store cleanup
-try {
-    Write-CustomMessage "Checking for pending operations before DISM cleanup."
-    # Short-circuit: if a pending reboot exists, log and skip DISM to avoid incomplete cleanup
-    if (Test-PendingReboot) {
-        Write-CustomMessage "WARNING: Pending reboot detected. Skipping DISM cleanup as it may be incomplete until reboot occurs." -Level WARN
-    }
-    else {
-        # Run RevertPendingActions and wait for completion
-        $pendingProcess = Start-Process -FilePath 'dism.exe' -ArgumentList '/Online /Cleanup-Image /RevertPendingActions' -NoNewWindow -Wait -PassThru -ErrorAction Stop
-        if ($pendingProcess.ExitCode -ne 0) {
-            Write-CustomMessage "WARNING: Clearing pending operations returned exit code $($pendingProcess.ExitCode)."
-        }
-        else {
-            Write-CustomMessage "Pending operations cleared successfully."
-        }
-
-        Write-CustomMessage "Starting DISM component store cleanup."
-        $cleanupProcess = Start-Process -FilePath 'dism.exe' -ArgumentList '/Online /Cleanup-Image /StartComponentCleanup' -NoNewWindow -Wait -PassThru -ErrorAction Stop
-        if ($cleanupProcess.ExitCode -eq 0) {
-            Write-CustomMessage "DISM component store cleanup completed successfully."
-        }
-        else {
-            Write-CustomMessage "ERROR: DISM cleanup failed with exit code $($cleanupProcess.ExitCode)."
-        }
-    }
+if (-not $Pref_DISMComponentStoreCleanup) {
+    Write-CustomMessage "SKIPPED: DISM component store cleanup disabled via Pref_DISMComponentStoreCleanup=$Pref_DISMComponentStoreCleanup." -Level INFO
 }
-catch {
-    Write-CustomMessage ("ERROR: DISM cleanup encountered an exception: {0}" -f $($_.Exception.Message))
+else {
+    try {
+        Invoke-DISMCleanup | Out-Null
+    }
+    catch {
+        Write-CustomMessage ("ERROR: DISM cleanup encountered an exception: {0}" -f $($_.Exception.Message))
+    }
 }
 # endregion
 
 # region 5A - Clean up old event logs
-try {
-    Write-CustomMessage "Starting event log cleanup. Logs to process: $($logsToClear -join ', ')"
-
-    # Define the archive directory for exported logs
-    $archiveDir = "$env:TEMP\EventLogArchives"
-    if (-not (Test-Path $archiveDir)) {
-        New-Item -Path $archiveDir -ItemType Directory -Force | Out-Null
-        Write-CustomMessage "Created archive directory: $archiveDir"
-    }
-
-    # Cache available logs once to avoid repeated wevtutil el calls
+if (-not $Pref_EventLogCleanup) {
+    Write-CustomMessage "SKIPPED: Event log cleanup disabled via Pref_EventLogCleanup=$Pref_EventLogCleanup." -Level INFO
+}
+else {
     try {
-        $availableLogs = wevtutil el 2>$null
-    }
-    catch {
-        $availableLogs = @()
-    }
+        Write-CustomMessage "Starting event log cleanup. Logs to process: $($logsToClear -join ', ')"
 
-    foreach ($log in $logsToClear) {
+        # Define the archive directory for exported logs
+        $archiveDir = "$env:TEMP\EventLogArchives"
+        if (-not $DryRun -and -not (Test-Path $archiveDir)) {
+            New-Item -Path $archiveDir -ItemType Directory -Force | Out-Null
+            Write-CustomMessage "Created archive directory: $archiveDir"
+        }
+
+        # Cache available logs once to avoid repeated wevtutil el calls
         try {
-            if ($availableLogs -contains $log) {
-                # Unique export filename to avoid collisions
-                $safeName = ($log -replace '[\\/:*?"<>|]', '_')
-                $exportPath = Join-Path -Path $archiveDir -ChildPath ("{0}_{1}.evtx" -f $safeName, (Get-Date -Format 'yyyyMMdd_HHmmss'))
-                Write-CustomMessage ("Exporting log: {0} to {1}" -f $log, $exportPath)
+            $availableLogs = wevtutil el 2>$null
+        }
+        catch {
+            $availableLogs = @()
+        }
 
-                $res = Export-EventLog -LogName $log -ExportPath $exportPath
-                if ($res.Success) {
-                    Write-CustomMessage ("Successfully exported log: {0} to {1}" -f $log, $exportPath)
-                    try {
-                        # Clear the log after successful export; pipe output to Out-Null to avoid unused variable warnings
-                        & (Join-Path -Path $env:WINDIR -ChildPath 'System32\wevtutil.exe') cl "$log" 2>&1 | Out-Null
-                        Write-CustomMessage ("Cleared log: {0}" -f $log)
+        foreach ($log in $logsToClear) {
+            try {
+                if ($availableLogs -contains $log) {
+                    # Unique export filename to avoid collisions
+                    $safeName = ($log -replace '[\\/:*?"<>|]', '_')
+                    $exportPath = Join-Path -Path $archiveDir -ChildPath ("{0}_{1}.evtx" -f $safeName, (Get-Date -Format 'yyyyMMdd_HHmmss'))
+                    if ($DryRun) {
+                        Write-CustomMessage ("DRYRUN: Would export log {0} to {1} and clear it afterwards." -f $log, $exportPath)
                     }
-                    catch {
-                        Write-CustomMessage ("WARNING: Failed to clear log {0}: {1}" -f $log, $($_.Exception.Message)) -Level WARN
+                    else {
+                        Write-CustomMessage ("Exporting log: {0} to {1}" -f $log, $exportPath)
+
+                        $res = Export-EventLog -LogName $log -ExportPath $exportPath
+                        if ($res.Success) {
+                            Write-CustomMessage ("Successfully exported log: {0} to {1}" -f $log, $exportPath)
+                            try {
+                                # Clear the log after successful export; pipe output to Out-Null to avoid unused variable warnings
+                                & (Join-Path -Path $env:WINDIR -ChildPath 'System32\wevtutil.exe') cl "$log" 2>&1 | Out-Null
+                                Write-CustomMessage ("Cleared log: {0}" -f $log)
+                            }
+                            catch {
+                                Write-CustomMessage ("WARNING: Failed to clear log {0}: {1}" -f $log, $($_.Exception.Message)) -Level WARN
+                            }
+                        }
+                        else {
+                            Write-CustomMessage (("WARNING: wevtutil epl returned exit code {0} for {1}. Output: {2}" -f $res.ExitCode, $log, $res.Output)) -Level WARN
+                        }
                     }
                 }
                 else {
-                    Write-CustomMessage (("WARNING: wevtutil epl returned exit code {0} for {1}. Output: {2}" -f $res.ExitCode, $log, $res.Output)) -Level WARN
+                    Write-CustomMessage (("Log not found: {0}" -f $log))
                 }
             }
-            else {
-                Write-CustomMessage (("Log not found: {0}" -f $log))
+            catch {
+                Write-CustomMessage (("ERROR: Failed to process log: {0}. Exception: {1}" -f $log, $($_.Exception.Message)))
             }
         }
-        catch {
-            Write-CustomMessage (("ERROR: Failed to process log: {0}. Exception: {1}" -f $log, $($_.Exception.Message)))
-        }
-    }
 
-    Write-CustomMessage "Event log cleanup completed."
-}
-catch {
-    Write-CustomMessage "ERROR: Failed to clean up event logs. $_"
+        Write-CustomMessage "Event log cleanup completed."
+    }
+    catch {
+        Write-CustomMessage "ERROR: Failed to clean up event logs. $_"
+    }
 }
 # endregion
 
 # region 6A - Clean up user-specific temporary files
-try {
-    $tempPath = "$env:USERPROFILE\AppData\Local\Temp"
-    if (Test-Path $tempPath) {
-        Write-CustomMessage "Cleaning user-specific temporary files at $tempPath"
-        # Enumerate using pruned walker so excluded branches are not recursed into
-        $startTime = Get-Date
-        $items = Get-SafeChildItems -Path $tempPath | Where-Object { -not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) }
-        foreach ($item in $items) {
-            # Respect a time budget so long-running recursive deletions don't run indefinitely
-            if ((Get-Date) -gt $startTime.AddMinutes($MaxCleanupDurationMinutes)) {
-                Write-CustomMessage "WARNING: Cleanup loop exceeded time budget of $MaxCleanupDurationMinutes minutes. Breaking out to avoid long-running deletes."
-                break
-            }
-            try {
-                # If this is a reparse point discovered later, skip it
-                if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-                    Write-CustomMessage "Skipping reparse point/mount: $($item.FullName)"
-                    continue
-                }
-                if (Test-IsProtectedPath -PathToTest $item.FullName) {
-                    Write-CustomMessage "Skipping protected path: $($item.FullName)"
-                    continue
-                }
-                # Double-check remaining time budget just before an expensive delete
-                if ((Get-Date) -gt $startTime.AddMinutes($MaxCleanupDurationMinutes)) {
-                    Write-CustomMessage "WARNING: Time budget reached before deleting $($item.FullName). Skipping remaining deletes."
-                    break
-                }
-                if ($DryRun) { Write-CustomMessage "DRYRUN: Would delete: $($item.FullName)" }
-                else { Remove-Item -Path $item.FullName -Recurse -Force -ErrorAction Stop; Write-CustomMessage "Deleted: $($item.FullName)" }
-            }
-            catch {
-                Write-CustomMessage "WARNING: Could not delete $($item.FullName): $_"
-            }
-        }
-    }
+if (-not $Pref_UserTempCleanup) {
+    Write-CustomMessage "SKIPPED: User-specific temp file cleanup disabled via Pref_UserTempCleanup=$Pref_UserTempCleanup." -Level INFO
 }
-catch {
-    Write-CustomMessage "ERROR: Failed to clean user-specific temporary files. $_"
+else {
+    try {
+        $tempPath = "$env:USERPROFILE\AppData\Local\Temp"
+        Write-CustomMessage "Cleaning user-specific temporary files at $tempPath"
+        Invoke-UserTempCleanup -UserTempPath $tempPath -DurationMinutes $MaxCleanupDurationMinutes | Out-Null
+    }
+    catch {
+        Write-CustomMessage "ERROR: Failed to clean user-specific temporary files. $_"
+    }
 }
 
 if (-not $logFileDirectory) {
@@ -1666,156 +2074,177 @@ if (-not $logFileDirectory) {
 # endregion
 
 # region 6B - Remove user-specific temporary files
-try {
-    $startTime = Get-Date
-    # Pruned enumeration for global TEMP to avoid entering excluded branches
-    $tempFiles = Get-SafeChildItems -Path $env:TEMP | Where-Object { -not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) }
-    foreach ($file in $tempFiles) {
-        if ((Get-Date) -gt $startTime.AddMinutes($MaxCleanupDurationMinutes)) {
-            Write-CustomMessage "WARNING: env:TEMP cleanup exceeded time budget of $MaxCleanupDurationMinutes minutes. Stopping further deletions in this pass."
-            break
-        }
-        try {
-            if ($file.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-                Write-CustomMessage "Skipping reparse point/mount: $($file.FullName)"
-                continue
-            }
-            if (Test-IsProtectedPath -PathToTest $file.FullName) {
-                Write-CustomMessage "Skipping protected path: $($file.FullName)"
-                continue
-            }
-            if ($DryRun) { Write-CustomMessage "DRYRUN: Would remove temp item: $($file.FullName)" }
-            else { Remove-Item -Path $file.FullName -Recurse -Force -ErrorAction Stop; Write-CustomMessage "Removed temp item: $($file.FullName)" }
-        }
-        catch {
-            Write-CustomMessage "WARNING: Failed to remove temp item $($file.FullName): $_"
-        }
-    }
-    Write-CustomMessage "Completed temp cleanup pass for $env:TEMP (excluding log directory)."
+if (-not $Pref_GlobalTempCleanup) {
+    Write-CustomMessage "SKIPPED: Global temp cleanup disabled via Pref_GlobalTempCleanup=$Pref_GlobalTempCleanup." -Level INFO
 }
-catch {
-    if ($_.Exception -is [System.UnauthorizedAccessException]) {
-        Write-CustomMessage "Access denied while removing temporary files. Attempting to adjust permissions."
-        try {
-            $tempFiles | ForEach-Object {
-                $acl = Get-Acl -Path $_.FullName
-                $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule (
-                    [System.Security.Principal.WindowsIdentity]::GetCurrent().Name,
-                    'FullControl',
-                    'ContainerInherit,ObjectInherit',
-                    'None',
-                    'Allow'
-                )
-                $acl.SetAccessRule($accessRule)
-                Set-Acl -Path $_.FullName -AclObject $acl
-            }
-            Write-CustomMessage "Permissions adjusted. Retrying file removal."
-            $tempFiles | Remove-Item -Recurse -Force -ErrorAction Stop
-        }
-        catch {
-            Write-CustomMessage "ERROR: Failed to adjust permissions or remove files. Exception: $_.Exception.Message"
-        }
+else {
+    try {
+        Invoke-GlobalTempCleanup -GlobalTempPath $env:TEMP -DurationMinutes $MaxCleanupDurationMinutes | Out-Null
+        Write-CustomMessage "Completed temp cleanup pass for $env:TEMP (excluding log directory)."
     }
-    else {
-        Write-CustomMessage "ERROR: Failed to remove temporary files from $env:TEMP. Exception: $_.Exception.Message"
+    catch {
+        Write-CustomMessage ("ERROR: Failed to remove temporary files from {0}. Exception: {1}" -f $env:TEMP, $_.Exception.Message)
     }
+    # Close the else block opened for Pref_GlobalTempCleanup
 }
 # endregion
 
 # region 7A - CleanMgr registry preparation
-foreach ($keyName in $cleanupTypeSelection) {
+if (-not $Pref_CleanMgrPrep) {
+    Write-CustomMessage "SKIPPED: CleanMgr registry preparation disabled by Pref_CleanMgrPrep." -Level INFO
+}
+else {
+    Set-CleanMgrCategories -Types $cleanupTypeSelection | Out-Null
+}
+#endregion
+
+# region 7B - Run CleanMgr silently
+
+if (-not $Pref_RunCleanMgr) {
+    Write-CustomMessage "SKIPPED: CleanMgr run disabled by Pref_RunCleanMgr." -Level INFO
+}
+else {
     try {
-        $keyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\$keyName"
-        if (Test-Path $keyPath) {
-            Set-ItemProperty -Path $keyPath -Name "StateFlags0001" -Value 2 -Force -ErrorAction Stop
-            Write-CustomMessage "Configured CleanMgr for $keyName."
+        $cleanMgrPath = "$env:SystemRoot\System32\cleanmgr.exe"
+        if (-not (Test-Path $cleanMgrPath)) {
+            Write-CustomMessage "ERROR: cleanmgr.exe not found at $cleanMgrPath. Skipping CleanMgr step."
+            throw "CleanMgr executable not found."
         }
-        else {
-            Write-CustomMessage "Skipped missing CleanMgr category: $keyName."
+
+        Write-CustomMessage "Prepared CleanMgr categories; CleanMgr run will be invoked using /sagerun:1 to apply configured categories."
+        # Diagnostic: list which CleanMgr registry keys were set and their StateFlags0001 values (read-only)
+        try {
+            Write-CustomMessage "CleanMgr diagnostic: enumerating configured VolumeCaches keys and their StateFlags0001 values."
+            $vcRoot = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches'
+            if (Test-Path $vcRoot) {
+                Get-ChildItem -Path $vcRoot -ErrorAction SilentlyContinue | ForEach-Object {
+                    try {
+                        $cat = $_.PSChildName
+                        $props = Get-ItemProperty -Path $_.PSPath -Name 'StateFlags0001' -ErrorAction SilentlyContinue
+                        $flag = if ($props -and $props.StateFlags0001 -ne $null) { $props.StateFlags0001 } else { '<not set>' }
+                        Write-CustomMessage ("CleanMgr diagnostic: Category='{0}', StateFlags0001={1}" -f $cat, $flag)
+                    }
+                    catch {
+                        Write-CustomMessage ("CleanMgr diagnostic: Failed reading {0}: {1}" -f $_.PSChildName, $_)
+                    }
+                }
+            }
+            else { Write-CustomMessage "CleanMgr diagnostic: VolumeCaches registry root not found: $vcRoot" }
+        }
+        catch { Write-CustomMessage "CleanMgr diagnostic: enumeration failed: $_" }
+        finally {
+            # Probe paths to capture before/after sizes for diagnostic purposes (read-only)
+            $probePaths = @(
+                "$env:TEMP",
+                "C:\Windows\Temp",
+                "$env:SystemRoot\SoftwareDistribution\Download",
+                "$env:SystemRoot\\Downloaded Program Files"
+            )
+
+            try { $preSnapshot = Get-ProbeSnapshot -PathsToProbe $probePaths -IgnorePrune } catch { $preSnapshot = @{} }
+
+            # Attempt to run cleanmgr in silent sagerun mode regardless of diagnostic/merge-log outcome.
+            try {
+                if (Test-Path $cleanMgrPath) {
+                    $whatIfRequested = $false
+                    if ($PSBoundParameters.ContainsKey('WhatIf')) { $whatIfRequested = $true }
+                    if ($whatIfRequested -or $DryRun) {
+                        Write-CustomMessage "DRYRUN: Would invoke CleanMgr to apply configured categories (/sagerun:1)." -Level INFO
+                    }
+                    elseif ($PSCmdlet -and -not $PSCmdlet.ShouldProcess($cleanMgrPath, 'Run cleanmgr /sagerun:1')) {
+                        Write-CustomMessage "ShouldProcess declined: skipping CleanMgr run." -Level INFO
+                    }
+                    else {
+                        Write-CustomMessage "Invoking CleanMgr to apply configured categories (/sagerun:1)."
+                        try {
+                            $proc = Start-Process -FilePath $cleanMgrPath -ArgumentList '/sagerun:1' -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
+                            if ($proc -and $proc.ExitCode -eq 0) { Write-CustomMessage "CleanMgr completed with exit code 0." }
+                            elseif ($proc) { Write-CustomMessage (("WARNING: CleanMgr returned exit code {0}." -f $proc.ExitCode)) -Level WARN }
+                        }
+                        catch { Write-CustomMessage (("ERROR: Failed to start or run CleanMgr: {0}" -f $_)) -Level ERROR }
+                    }
+                }
+                else { Write-CustomMessage "WARNING: cleanmgr.exe not found at expected path: $cleanMgrPath" -Level WARN }
+            }
+            catch { Write-CustomMessage "ERROR: Failed to invoke CleanMgr: $_" }
+
+            # Post-snapshot and compute delta (where possible)
+            try { $postSnapshot = Get-ProbeSnapshot -PathsToProbe $probePaths -IgnorePrune } catch { $postSnapshot = @{} }
+            try {
+                foreach ($p in $probePaths) {
+                    $preObj = $null; $postObj = $null
+                    if ($preSnapshot.ContainsKey($p)) { $preObj = $preSnapshot[$p] }
+                    if ($postSnapshot.ContainsKey($p)) { $postObj = $postSnapshot[$p] }
+                    if ($null -ne $preObj) { $preBytes = [int64]($preObj.Bytes -as [int64]) } else { $preBytes = 0 }
+                    if ($null -ne $postObj) { $postBytes = [int64]($postObj.Bytes -as [int64]) } else { $postBytes = 0 }
+                    $delta = $preBytes - $postBytes
+                    $deltaMB = [math]::Round($delta / 1MB, 2)
+                    $deltaGB = [math]::Round($delta / 1GB, 2)
+                    Write-CustomMessage ("Probe delta: Path='{0}', Before={1} bytes ({2} MB), After={3} bytes ({4} MB), Freed={5} MB ({6} GB)" -f $p, $preBytes, ([math]::Round($preBytes / 1MB, 2)), $postBytes, ([math]::Round($postBytes / 1MB, 2)), $deltaMB, $deltaGB)
+                }
+            }
+            catch { Write-CustomMessage "WARNING: Failed to compute probe deltas: $_" }
         }
     }
     catch {
-        Write-CustomMessage "ERROR: Failed to configure CleanMgr for $keyName. $_"
+        Write-CustomMessage "ERROR: Failed to execute CleanMgr. $_"
     }
 }
-# endregion
 
-# region 7B - Run CleanMgr silently
-try {
-    $cleanMgrPath = "$env:SystemRoot\System32\cleanmgr.exe"
-    if (-not (Test-Path $cleanMgrPath)) {
-        Write-CustomMessage "ERROR: cleanmgr.exe not found at $cleanMgrPath. Skipping CleanMgr step."
-        throw "CleanMgr executable not found."
-    }
+#endregion
 
-    Write-CustomMessage "Prepared CleanMgr categories; CleanMgr run will be invoked using /sagerun:1 to apply configured categories."
-    # Diagnostic: list which CleanMgr registry keys were set and their StateFlags0001 values (read-only)
+# region 7C - Optional: Remove C:\Windows.old (pref-gated, dry-run-aware)
+if (-not $Pref_RemoveWindowsOld) {
+    Write-CustomMessage "SKIPPED: Removal of C:\Windows.old is disabled by Pref_RemoveWindowsOld." -Level INFO
+}
+else {
     try {
-        Write-CustomMessage "CleanMgr diagnostic: enumerating configured VolumeCaches keys and their StateFlags0001 values."
-        $vcRoot = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches'
-        if (Test-Path $vcRoot) {
-            Get-ChildItem -Path $vcRoot -ErrorAction SilentlyContinue | ForEach-Object {
-                try {
-                    $cat = $_.PSChildName
-                    $props = Get-ItemProperty -Path $_.PSPath -Name 'StateFlags0001' -ErrorAction SilentlyContinue
-                    $flag = if ($props -and $props.StateFlags0001 -ne $null) { $props.StateFlags0001 } else { '<not set>' }
-                    Write-CustomMessage ("CleanMgr diagnostic: Category='{0}', StateFlags0001={1}" -f $cat, $flag)
+        $windowsOld = Join-Path -Path $env:SystemDrive -ChildPath 'Windows.old'
+        if (-not (Test-Path -Path $windowsOld)) {
+            Write-CustomMessage "C:\\Windows.old not present; nothing to remove." -Level INFO
+        }
+        else {
+            # Ensure the path is strictly the system-drive root Windows.old to avoid accidental deletes
+            $resolved = (Get-Item -LiteralPath $windowsOld -ErrorAction SilentlyContinue)
+            if (-not $resolved) { Write-CustomMessage "Could not resolve C:\\Windows.old; skipping." -Level WARN }
+            else {
+                # Safety checks: ensure resolved path is on the system drive and exactly ends with 'Windows.old'
+                if (($resolved.FullName -ne $windowsOld) -or ($resolved.PSDrive.Name -ne (Get-Item -Path $env:SystemDrive).PSDrive.Name)) {
+                    Write-CustomMessage "Path mismatch or not on system drive; refusing to remove $($resolved.FullName)." -Level ERROR
                 }
-                catch {
-                    Write-CustomMessage ("CleanMgr diagnostic: Failed reading {0}: {1}" -f $_.PSChildName, $_)
+                else {
+                    # Report size and contents in dry-run; only delete when not DryRun
+                    try {
+                        $size = (Get-ChildItem -LiteralPath $windowsOld -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+                        $sizeMB = if ($size) { [math]::Round($size / 1MB, 2) } else { 0 }
+                        Write-CustomMessage ("C:\\Windows.old present: {0} bytes ({1} MB)." -f ($size -or 0), $sizeMB)
+                    }
+                    catch { Write-CustomMessage "WARNING: Could not compute Windows.old size: $_" -Level WARN }
+
+                    $whatIfRequested = $false
+                    if ($PSBoundParameters.ContainsKey('WhatIf')) { $whatIfRequested = $true }
+
+                    if ($whatIfRequested -or $DryRun) {
+                        Write-CustomMessage "DRYRUN/WhatIf: Would remove C:\\Windows.old (pref enabled)." -Level INFO
+                    }
+                    else {
+                        Write-CustomMessage "Removing C:\\Windows.old as requested by Pref_RemoveWindowsOld." -Level WARN
+                        # Use existing safe removal helper if available; otherwise fallback to Remove-Item with retries
+                        if (Get-Command -Name Invoke-RemoveWithRetry -ErrorAction SilentlyContinue) {
+                            Invoke-RemoveWithRetry -Path $windowsOld -MaxRetries 3 -RetryDelaySeconds 2
+                        }
+                        else {
+                            try { Remove-Item -LiteralPath $windowsOld -Recurse -Force -ErrorAction Stop; Write-CustomMessage "Removed C:\\Windows.old." }
+                            catch { Write-CustomMessage ("ERROR: Failed to remove C:\\Windows.old: {0}" -f $_) -Level ERROR }
+                        }
+                    }
                 }
             }
         }
-        else { Write-CustomMessage "CleanMgr diagnostic: VolumeCaches registry root not found: $vcRoot" }
     }
-    catch { Write-CustomMessage "CleanMgr diagnostic: enumeration failed: $_" }
-    finally {
-        # Probe paths to capture before/after sizes for diagnostic purposes (read-only)
-        $probePaths = @(
-            "$env:TEMP",
-            "C:\Windows\Temp",
-            "$env:SystemRoot\SoftwareDistribution\Download",
-            "$env:SystemRoot\\Downloaded Program Files"
-        )
-
-        try { $preSnapshot = Get-ProbeSnapshot -PathsToProbe $probePaths -IgnorePrune } catch { $preSnapshot = @{} }
-
-        # Attempt to run cleanmgr in silent sagerun mode regardless of diagnostic/merge-log outcome.
-        try {
-            if (Test-Path $cleanMgrPath) {
-                Write-CustomMessage "Invoking CleanMgr to apply configured categories (/sagerun:1)."
-                try {
-                    $proc = Start-Process -FilePath $cleanMgrPath -ArgumentList '/sagerun:1' -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
-                    if ($proc -and $proc.ExitCode -eq 0) { Write-CustomMessage "CleanMgr completed with exit code 0." }
-                    elseif ($proc) { Write-CustomMessage ("WARNING: CleanMgr returned exit code {0}." -f $proc.ExitCode) -Level WARN }
-                }
-                catch { Write-CustomMessage ("ERROR: Failed to start or run CleanMgr: {0}" -f $_) -Level ERROR }
-            }
-            else { Write-CustomMessage "WARNING: cleanmgr.exe not found at expected path: $cleanMgrPath" -Level WARN }
-        }
-        catch { Write-CustomMessage "ERROR: Failed to invoke CleanMgr: $_" }
-
-        # Post-snapshot and compute delta (where possible)
-        try { $postSnapshot = Get-ProbeSnapshot -PathsToProbe $probePaths -IgnorePrune } catch { $postSnapshot = @{} }
-        try {
-            foreach ($p in $probePaths) {
-                $preObj = $null; $postObj = $null
-                if ($preSnapshot.ContainsKey($p)) { $preObj = $preSnapshot[$p] }
-                if ($postSnapshot.ContainsKey($p)) { $postObj = $postSnapshot[$p] }
-                $preBytes = ($null -ne $preObj) ? ([int64]($preObj.Bytes -as [int64])) : 0
-                $postBytes = ($null -ne $postObj) ? ([int64]($postObj.Bytes -as [int64])) : 0
-                $delta = $preBytes - $postBytes
-                $deltaMB = [math]::Round($delta / 1MB, 2)
-                $deltaGB = [math]::Round($delta / 1GB, 2)
-                Write-CustomMessage ("Probe delta: Path='{0}', Before={1} bytes ({2} MB), After={3} bytes ({4} MB), Freed={5} MB ({6} GB)" -f $p, $preBytes, ([math]::Round($preBytes / 1MB, 2)), $postBytes, ([math]::Round($postBytes / 1MB, 2)), $deltaMB, $deltaGB)
-            }
-        }
-        catch { Write-CustomMessage "WARNING: Failed to compute probe deltas: $_" }
-    }
+    catch { Write-CustomMessage ("ERROR: Windows.old removal step failed: {0}" -f $_) -Level ERROR }
 }
-catch {
-    Write-CustomMessage "ERROR: Failed to execute CleanMgr. $_"
-}
+
 # endregion
 
 # region 8 - Wrap up and exit
@@ -1829,14 +2258,13 @@ catch {
     Write-Verbose "Failed to consolidate logs: $_"
 }
 
-# --- Enhance error handling for temporary file creation ---
+# --- Validate temp log state after consolidation ---
 if (-not (Test-Path -Path $tempLogFile)) {
-    try {
-        New-Item -Path $tempLogFile -ItemType File -Force | Out-Null
+    if ($DryRun -or $PreserveTempLog) {
+        Write-CustomMessage "WARNING: Temporary log file was expected to remain available during wrap-up but was not found: $tempLogFile" -Level WARN
     }
-    catch {
-        Write-Verbose "Failed to create temporary log file: $_"
-        exit 1
+    else {
+        Write-Verbose "Temporary log file already absent during wrap-up: $tempLogFile"
     }
 }
 
@@ -1856,14 +2284,14 @@ if ($transcriptStarted) {
 # --- Enhanced error handling for temporary file cleanup ---
 try {
     if (Test-Path -Path $tempLogFile) {
-        if ($DryRun) { Write-CustomMessage "DRYRUN: Would remove temporary log file: $tempLogFile" }
+        if ($DryRun -or $PreserveTempLog) {
+            Write-CustomMessage "Preserving temporary log file: $tempLogFile"
+        }
+        elseif ($merged) {
+            Remove-Item -Path $tempLogFile -Force -ErrorAction Stop
+        }
         else {
-            if ($merged) {
-                Remove-Item -Path $tempLogFile -Force -ErrorAction Stop
-            }
-            else {
-                Write-CustomMessage "Preserving temp log because merge did not complete successfully: $tempLogFile"
-            }
+            Write-CustomMessage "Preserving temp log because merge did not complete successfully: $tempLogFile"
         }
     }
 }
@@ -1915,165 +2343,133 @@ Write-CustomMessage "Space recovered: $spaceRecoveredGB GB ($([math]::Round($spa
 
 # region 8C - Resolve log export failures
 Write-CustomMessage "Note: Event-log exports were performed earlier; skipping redundant export loop in region 8C to avoid duplicate operations." -Level INFO
-# endregion
+#endregion
 
 # region 8D - Handle file locking issues during log consolidation
-try {
-    # Stop transcript if we started one; ignore hosts that report transcription is inactive
-    if ($transcriptStarted) {
-        try { Stop-Transcript -ErrorAction SilentlyContinue } catch { Write-Verbose ('Stop-Transcript ignored: {0}' -f $_) }
-    }
+# Merge-Log already ran once at the start of wrap-up. Subsequent messages now write directly to the main log.
 
-    if (Test-Path -Path $tempLogFile) {
-        if ($DryRun) {
-            $msg = "DRYRUN: Would consolidate temporary log '$tempLogFile' into main log '$logFile'"
-            Write-CustomMessage $msg
-        }
-        else {
-            # Conservative consolidation: read temp file, append as a value, then remove temp file.
-            try {
-                $tempContents = Get-Content -Path $tempLogFile -ErrorAction SilentlyContinue
-                if ($null -ne $tempContents -and $tempContents.Count -gt 0) {
-                    Add-Content -Path $logFile -Value $tempContents -ErrorAction Stop
-                }
-                Remove-Item -Path $tempLogFile -Force -ErrorAction Stop
-
-                $msg = "Consolidated temp log into $logFile and removed $tempLogFile"
-                Write-CustomMessage $msg
-            }
-            catch {
-                $err = "ERROR: Failed to consolidate logs: $_"
-                Write-CustomMessage $err
-            }
-        }
-    }
-}
-catch {
-    $err = "ERROR: Exception during log consolidation: $_"
-    Write-CustomMessage $err
-}
-# endregion
+#endregion
 
 # region 8E - Call Resolve-FileLock for temporary files (Test-FileLock and Resolve-FileLock are defined earlier)
-Resolve-FileLock -DirectoryPath "$env:TEMP"
-# endregion
 
-# region 8F - Handle access denied errors during cleanup
-try {
-    # Use pruned enumerator for C:\Windows\Temp to prevent descending into excluded branches
-    Get-SafeChildItems -Path 'C:\Windows\Temp' | ForEach-Object {
-        try {
-            Remove-Item -Path $_.FullName -Recurse -Force -ErrorAction Stop
-        }
-        catch {
-            Write-CustomMessage "WARNING: Access denied to file or folder: $($_.FullName). Skipping."
-        }
-    }
+if ($Pref_UserTempCleanup -or $Pref_GlobalTempCleanup) {
+    Resolve-FileLock -DirectoryPath "$env:TEMP"
 }
-catch {
-    Write-CustomMessage "ERROR: Failed to clean up temporary files. $_"
-}
-# endregion
 
-# region 8H - Enhanced error handling for Get-ChildItem
-try {
-    # Use pruned enumerator and only include files to avoid descending into excluded branches
-    $tempFiles = Get-SafeChildItems -Path $env:TEMP -FilesOnly | Where-Object { (Test-Path $_.FullName) -and (Get-Acl $_.FullName -ErrorAction SilentlyContinue) }
-    foreach ($file in $tempFiles) {
-        try {
-            if (Test-Path -Path $file.FullName) {
-                Remove-Item -Path $file.FullName -Recurse -Force -ErrorAction Stop
-                Write-CustomMessage "Successfully removed file: $($file.FullName)"
-            }
-        }
-        catch {
-            Write-CustomMessage "ERROR: Failed to remove file: $($file.FullName). Exception: $_"
-        }
-    }
-}
-catch {
-    Write-CustomMessage "ERROR: Failed to enumerate temporary files. Exception: $_"
-}
 # endregion
 
 # region 8I - Enhanced error handling for Move-Item
 try {
-    if (Test-Path -Path $logFile) {
-        if (-not (Test-Path -Path $archiveDirectory)) {
-            New-Item -ItemType Directory -Path $archiveDirectory -Force | Out-Null
-            Write-CustomMessage "Created archive directory: $archiveDirectory"
-        }
-
+    # If DryRun, compute a concise interactive summary of probes and free-space deltas and print it to host
+    if ($DryRun) {
         try {
-            # Prefer atomic move of the main log into a per-run archive file
-            $timeStamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-            $perRunArchive = Join-Path -Path $archiveDirectory -ChildPath ("{0}-{1}.log" -f $scriptName, $timeStamp)
-
-            Move-Item -Path $logFile -Destination $perRunArchive -Force -ErrorAction Stop
-            # Recreate an empty main log file to preserve the file path (avoid breaking handles)
-            New-Item -Path $logFile -ItemType File -Force | Out-Null
-
-            Write-CustomMessage "Moved main log to per-run archive: $perRunArchive and recreated main log path: $logFile"
-        }
-        catch {
-            Write-CustomMessage "WARNING: Failed to move main log to per-run archive: $_. Falling back to append+truncate."
-
+            $probePaths = $global:__InitialProbePaths
+            try { $postSnapshot = Get-ProbeSnapshot -PathsToProbe $probePaths -IgnorePrune } catch { $postSnapshot = @{} }
+            # Use Write-Host for guaranteed interactive output in consoles
+            Write-Host "DRYRUN SUMMARY: Probe deltas follow (concise):"
+            foreach ($p in $probePaths) {
+                $preObj = $null; $postObj = $null
+                if ($global:__PreSnapshot -and $global:__PreSnapshot.ContainsKey($p)) { $preObj = $global:__PreSnapshot[$p] }
+                if ($postSnapshot.ContainsKey($p)) { $postObj = $postSnapshot[$p] }
+                if ($null -ne $preObj) { $preBytes = [int64]$preObj.Bytes } else { $preBytes = 0 }
+                if ($null -ne $postObj) { $postBytes = [int64]$postObj.Bytes } else { $postBytes = 0 }
+                $delta = $preBytes - $postBytes
+                $deltaMB = [math]::Round($delta / 1MB, 2)
+                Write-Host ("DRYRUN: Path={0}, Freed={1} MB" -f $p, $deltaMB)
+            }
             try {
-                if (-not (Test-Path -Path $archiveFile)) {
-                    New-Item -Path $archiveFile -ItemType File -Force | Out-Null
-                }
-
-                Get-Content -Path $logFile -ErrorAction SilentlyContinue | Add-Content -Path $archiveFile -ErrorAction Stop
-                # Truncate the main log while preserving the file path to avoid breaking handles
-                Set-Content -Path $logFile -Value @() -ErrorAction Stop
-
-                Write-CustomMessage "Archived main log to fallback archive $archiveFile and truncated main log at $logFile"
-            }
-            catch {
-                Write-CustomMessage "ERROR: Failed to archive main log in fallback mode: $_"
-                try {
-                    $diag = Join-Path -Path $archiveDirectory -ChildPath ("${scriptName}_archive_error_$(Get-Date -Format 'yyyyMMdd_HHmmss').diag.txt")
-                    "Archive failure: $_" | Out-File -FilePath $diag -Encoding utf8 -Force
-                    Write-CustomMessage "Wrote diagnostic file: $diag"
-                }
-                catch {
-                    Write-Verbose "Failed to write archive diagnostic: $_"
+                if ($null -ne $global:__InitialFreeSpace) {
+                    $finalFree = (Get-PSDrive -Name C).Free
+                    $deltaFree = $finalFree - $global:__InitialFreeSpace
+                    $deltaFreeMB = [math]::Round($deltaFree / 1MB, 2)
+                    Write-Host ("DRYRUN: FreeSpace change on C: {0} MB" -f $deltaFreeMB)
                 }
             }
+            catch { Write-Verbose "DRYRUN summary free-space compute failed: $_" }
         }
-    }
-    else {
-        Write-CustomMessage "WARNING: Log file not found at $logFile. Skipping archive step."
-    }
-}
-catch {
-    Write-CustomMessage "ERROR: Failed to archive logs. Exception: $_"
-}
+        catch { Write-Verbose "Failed to compute DRYRUN interactive summary: $_" }
 
-# Centralized archive call (single explicit statement, wrapped)
-try {
+        # Always provide a guaranteed concise DryRun summary visible to both interactive users
+        # and non-interactive capture systems. This writes both to the host/pipeline and
+        # creates a small per-run summary file in the archive directory.
+        try {
+            $summaryLine = "DRYRUN: Detailed actions were recorded to the temp log; preserved at: $tempLogFile"
+            try { Write-Host $summaryLine } catch {}
+            try { Write-Output $summaryLine } catch {}
+
+            # Write a small per-run summary file next to the archive for automation and auditing
+            try {
+                if (-not (Test-Path -Path $archiveDirectory)) { New-Item -ItemType Directory -Path $archiveDirectory -Force | Out-Null }
+                $summaryFile = Join-Path -Path $archiveDirectory -ChildPath ("${scriptName}_dryrun_summary_{0}.txt" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+                $summaryContent = @()
+                $summaryContent += $summaryLine
+                foreach ($p in $probePaths) {
+                    $preObj = $null; $postObj = $null
+                    if ($global:__PreSnapshot -and $global:__PreSnapshot.ContainsKey($p)) { $preObj = $global:__PreSnapshot[$p] }
+                    if ($postSnapshot.ContainsKey($p)) { $postObj = $postSnapshot[$p] }
+                    if ($null -ne $preObj) { $preBytes = [int64]$preObj.Bytes } else { $preBytes = 0 }
+                    if ($null -ne $postObj) { $postBytes = [int64]$postObj.Bytes } else { $postBytes = 0 }
+                    $delta = $preBytes - $postBytes
+                    $deltaMB = [math]::Round($delta / 1MB, 2)
+                    $summaryContent += ("Path={0}, Freed={1} MB" -f $p, $deltaMB)
+                }
+                if ($null -ne $global:__InitialFreeSpace) {
+                    try {
+                        $finalFree = (Get-PSDrive -Name C).Free
+                        $deltaFreeMB = [math]::Round((($finalFree - $global:__InitialFreeSpace) / 1MB), 2)
+                        $summaryContent += ("FreeSpaceChangeMB={0}" -f $deltaFreeMB)
+                    }
+                    catch { $summaryContent += "FreeSpaceChangeMB=unknown" }
+                }
+                # Also append the concise summary into the main log so Save-MainLogArchive will include it
+                try {
+                    foreach ($line in $summaryContent) {
+                        $ts = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+                        Add-Content -Path $logFile -Value ("$ts - INFO - $line") -ErrorAction SilentlyContinue
+                    }
+                }
+                catch { Write-Verbose "Failed to append DRYRUN summary to main log: $_" }
+
+                $summaryContent | Out-File -FilePath $summaryFile -Encoding UTF8 -Force
+                try { Write-Host ("DRYRUN SUMMARY FILE: {0}" -f $summaryFile) } catch {}
+                try { Write-Output ("DRYRUN SUMMARY FILE: {0}" -f $summaryFile) } catch {}
+            }
+            catch { Write-Verbose "Failed to write DRYRUN summary file: $_" }
+        }
+        catch {}
+    }
+
     $ok = Save-MainLogArchive -MainLogPath $logFile -ArchiveDir $archiveDirectory -ArchivePath $archiveFile
     if (-not $ok) {
         Write-CustomMessage "WARNING: Save-MainLogArchive returned false"
+    }
+    # Emit a single host-visible summary line so Intune and other capture mechanisms have a pointer to full logs.
+    try {
+        if ($script:LastPerRunArchive) {
+            Write-Output ("Run complete. Full run log archived to: {0}" -f $script:LastPerRunArchive)
+        }
+        elseif (Test-Path -Path $logFile) {
+            Write-Output ("Run complete. Main log path: {0} (may be truncated/rotated)." -f $logFile)
+        }
+        else {
+            Write-Output "Run complete. No main log file could be located; check temp logs in $env:TEMP for details."
+        }
+
+        if (Test-Path -Path $tempLogFile) {
+            Write-Output ("Note: temporary log preserved at: {0}" -f $tempLogFile)
+        }
+        elseif ($PreserveTempLog -or $DryRun) {
+            Write-Output ("WARNING: Temporary log was expected to be preserved but was not found: {0}" -f $tempLogFile)
+        }
+    }
+    catch {
+        Write-Output "Run complete. (Failed to produce host summary: $_)"
     }
 }
 catch {
     Write-Verbose "Save-MainLogArchive threw an exception: $_"
 }
-# endregion
 
-# region 8J - Handle access denied errors in Get-ChildItem
-try {
-    # Pruned enumerator for file-only listing to avoid recursing excluded branches
-    $tempFiles = Get-SafeChildItems -Path $env:TEMP -FilesOnly
-}
-catch {
-    Write-CustomMessage "ERROR: Failed to enumerate temporary files. $_"
-}
-# endregion
-
-# region 8K - Improve log export handling
-Write-CustomMessage "Note: Skipping redundant event-log export loop in region 8K; exports are handled in the canonical routine." -Level INFO
-# endregion
+#endregion
 
 # Script complete

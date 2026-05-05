@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="turbo-root" content="/PowerShellScripting">
-    <meta name="turbo-cache-control" content="no-cache" data-turbo-track="reload" data-track-token="3.11.0.815049006535">
+    <meta name="turbo-cache-control" content="no-cache" data-turbo-track="reload" data-track-token="3.11.0.816013946385">
 
     <!-- See retype.com -->
     <meta name="generator" content="Retype 3.11.0">
@@ -32,12 +32,12 @@
     <script data-cfasync="false">(function(){var cl=document.documentElement.classList,ls=localStorage.getItem("retype_scheme"),hd=cl.contains("dark"),hl=cl.contains("light"),wm=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches;if(ls==="dark"||(!ls&&wm&&!hd&&!hl)){cl.remove("light");cl.add("dark")}else if(ls==="light"||(!ls&&!wm&&!hd&&!hl)){cl.remove("dark");cl.add("light")}})();</script>
 
     <link href="../../../../favicon.ico" rel="icon">
-    <link href="../../../../resources/css/retype.css?v=3.11.0.815049006535" rel="stylesheet">
+    <link href="../../../../resources/css/retype.css?v=3.11.0.816013946385" rel="stylesheet">
 
-    <script data-cfasync="false" src="../../../../resources/js/config.js?v=3.11.0.815049006535" data-turbo-eval="false" defer></script>
+    <script data-cfasync="false" src="../../../../resources/js/config.js?v=3.11.0.816013946385" data-turbo-eval="false" defer></script>
     <script data-cfasync="false" src="../../../../resources/js/retype.js?v=3.11.0" data-turbo-eval="false" defer></script>
-    <script id="lunr-js" data-cfasync="false" src="../../../../resources/js/lunr.js?v=3.11.0.815049006535" data-turbo-eval="false" defer></script>
-    <script id="prism-js" data-cfasync="false" src="../../../../resources/js/prism.js?v=3.11.0.815049006535" defer></script>
+    <script id="lunr-js" data-cfasync="false" src="../../../../resources/js/lunr.js?v=3.11.0.816013946385" data-turbo-eval="false" defer></script>
+    <script id="prism-js" data-cfasync="false" src="../../../../resources/js/prism.js?v=3.11.0.816013946385" defer></script>
 </head>
 <body>
     <div id="retype-app" class="relative text-base antialiased text-base-text bg-base-bg font-body">
@@ -223,26 +223,7 @@
 </doc-anchor-target>
 <p>Provides detection and remediation scripts, for performing deep disk space cleanup on Windows devices.</p>
 <p>This landing page provides a concise entry point and links to focused pages for configuration, logic, deployment and troubleshooting.</p>
-<p>See the sub-pages in this folder for full details:</p>
-<ul>
-<li>Detection
-<ul>
-<li><a href="detection/">Detection script</a></li>
-</ul>
-</li>
-<li>Remediation
-<ul>
-<li><a href="remediation-logic/">Remediation logic</a></li>
-<li><a href="remediation/">Remediation script</a></li>
-</ul>
-</li>
-<li><a href="example-logs/">Example logs (full samples)</a></li>
-<li><a href="intune-setup/">Intune setup &amp; deployment</a></li>
-<li><a href="functions/">Function reference</a></li>
-<li><a href="troubleshooting/">Troubleshooting &amp; logging</a></li>
-<li><a href="references/">References</a></li>
-<li><a href="changelog/">Changelog</a></li>
-</ul>
+<p>Refer to the menu pages (left) for full information on this script.</p>
 <!-- omit from toc -->
 <doc-anchor-target id="on-this-page">
     <h2>
@@ -251,27 +232,22 @@
     </h2>
 </doc-anchor-target>
 <ul>
-<li><doc-anchor-trigger to="#quick-start">Quick start</doc-anchor-trigger></li>
 <li><doc-anchor-trigger to="#before-you-begin">Before you begin</doc-anchor-trigger></li>
+<li><doc-anchor-trigger to="#quick-start">Quick start</doc-anchor-trigger></li>
+<li><doc-anchor-trigger to="#quick-operational-note">Quick operational note</doc-anchor-trigger></li>
 <li><doc-anchor-trigger to="#credits">Credits</doc-anchor-trigger></li>
 </ul>
-<doc-anchor-target id="quick-start">
-    <h2>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#quick-start">#</doc-anchor-trigger>
-        <span>Quick start</span>
-    </h2>
-</doc-anchor-target>
-<div class="codeblock-wrapper"><doc-codeblock>
-<pre translate="no" class="language-powershell"><code v-pre class="language-powershell"># Full run (requires elevated prompt)
-.\intune\remediation\Win-Storage-Remediate.ps1 -Verbose</code></pre>
-</doc-codeblock></div>
-<p>For developer and operator guidance, use the links above. This file is intentionally short to make the site navigation easy to use.</p>
 <doc-anchor-target id="before-you-begin">
     <h2>
         <doc-anchor-trigger class="header-anchor-trigger" to="#before-you-begin">#</doc-anchor-trigger>
         <span>Before you begin</span>
     </h2>
 </doc-anchor-target>
+<blockquote>
+<p><strong>This script as designed will archive the contents of all log files specified in $logsToClear</strong></p>
+<p>Please ensure you are aware of the implications and impacts of this, and ensure log file selection is performed accordingly.</p>
+<p>If using this approach in a Corporate or Enterprise environment - always ensure your relevant Information Security professionals are included as part of a proper ITIL or other appropriate Change Management approach, for choosing what logs to archive and clear on the computers being targeted by this script, and understanding/managing any consequences this may have to your Security Monitoring approach and posture.</p>
+</blockquote>
 <div class="flex mb-6">
     <div class="shrink-0 w-1.5 rounded-tl-lg rounded-bl-lg bg-callout-info"></div>
     <div class="flex w-full py-4 border border-l-0 rounded-tr-lg rounded-br-lg doc-callout bg-callout-base-bg border-callout-base-border" role="alert">
@@ -297,26 +273,29 @@
 <li><a href="https://www.prajwaldesai.com/automatically-delete-old-user-profiles-using-intune/" class="outbound" target="_blank"><span>Automatically Delete Old User Profiles using Intune - Prajwal Desai</span><svg xmlns="http://www.w3.org/2000/svg" class="retype-outbound-trigger docs-icon ml-1" viewBox="0 0 24 24" role="presentation"><g fill="currentColor"><path d="M15.5 2.25a.75.75 0 0 1 .75-.75h5.5a.75.75 0 0 1 .75.75v5.5a.75.75 0 0 1-1.5 0V4.06l-6.22 6.22a.75.75 0 1 1-1.06-1.06L19.94 3h-3.69a.75.75 0 0 1-.75-.75Z"/><path d="M2.5 4.25c0-.966.784-1.75 1.75-1.75h8.5a.75.75 0 0 1 0 1.5h-8.5a.25.25 0 0 0-.25.25v15.5c0 .138.112.25.25.25h15.5a.25.25 0 0 0 .25-.25v-8.5a.75.75 0 0 1 1.5 0v8.5a1.75 1.75 0 0 1-1.75 1.75H4.25a1.75 1.75 0 0 1-1.75-1.75V4.25Z"/></g></svg></a></li>
 <li><a href="https://www.prajwaldesai.com/configure-storage-sense-using-intune/" class="outbound" target="_blank"><span>How to Configure Storage Sense using Intune - Prajwal Desai</span><svg xmlns="http://www.w3.org/2000/svg" class="retype-outbound-trigger docs-icon ml-1" viewBox="0 0 24 24" role="presentation"><g fill="currentColor"><path d="M15.5 2.25a.75.75 0 0 1 .75-.75h5.5a.75.75 0 0 1 .75.75v5.5a.75.75 0 0 1-1.5 0V4.06l-6.22 6.22a.75.75 0 1 1-1.06-1.06L19.94 3h-3.69a.75.75 0 0 1-.75-.75Z"/><path d="M2.5 4.25c0-.966.784-1.75 1.75-1.75h8.5a.75.75 0 0 1 0 1.5h-8.5a.25.25 0 0 0-.25.25v15.5c0 .138.112.25.25.25h15.5a.25.25 0 0 0 .25-.25v-8.5a.75.75 0 0 1 1.5 0v8.5a1.75 1.75 0 0 1-1.75 1.75H4.25a1.75 1.75 0 0 1-1.75-1.75V4.25Z"/></g></svg></a></li>
 </ul>
-<div class="flex mb-6">
-    <div class="shrink-0 w-1.5 rounded-tl-lg rounded-bl-lg bg-callout-info"></div>
-    <div class="flex w-full py-4 border border-l-0 rounded-tr-lg rounded-br-lg doc-callout bg-callout-base-bg border-callout-base-border" role="alert">
-        <div class="flex items-center ml-4 h-7">
-            <svg xmlns="http://www.w3.org/2000/svg" class="mb-px text-callout-info" width="22" height="22" viewBox="0 0 24 24" role="presentation">
-                <g fill="currentColor"><g>
-                    <path d="M12 1C5.93 1 1 5.93 1 12s4.93 11 11 11 11-4.93 11-11S18.07 1 12 1zm0 20c-4.96 0-9-4.04-9-9s4.04-9 9-9 9 4.04 9 9-4.04 9-9 9z"></path>
-                    <path d="M12 11c-.55 0-1 .45-1 1v4c0 .55.45 1 1 1s1-.45 1-1v-4c0-.55-.45-1-1-1zM12.01 7c-.56 0-1 .45-1 1s.45 1 1 1 1-.45 1-1-.45-1-1-1z"></path>
-                    <path fill="none" d="M0 0h24v24H0z"></path>
-                </g></g>
-            </svg>
-        </div>
-        <div class="pr-5 ml-3 w-full">
-            <h5>Important</h5>
-<p><strong>This script as designed will archive the contents of all log files specified in $logsToClear</strong></p>
-<p>Please ensure you are aware of the implications and impacts of this, and ensure log file selection is performed accordingly.</p>
-<p>If using this approach in a Corporate or Enterprise environment - always ensure your relevant Information Security professionals are included as part of a proper ITIL or other appropriate Change Management approach, for choosing what logs to archive and clear on the computers being targeted by this script, and understanding/managing any consequences this may have to your Security Monitoring approach and posture.</p>
-        </div>
-    </div>
-</div>
+<doc-anchor-target id="quick-start">
+    <h2>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#quick-start">#</doc-anchor-trigger>
+        <span>Quick start</span>
+    </h2>
+</doc-anchor-target>
+<div class="codeblock-wrapper"><doc-codeblock>
+<pre translate="no" class="language-powershell"><code v-pre class="language-powershell"># Full run (requires elevated prompt)
+.\intune\remediation\Win-Storage-Remediate.ps1 -Verbose</code></pre>
+</doc-codeblock></div>
+<p>For developer and operator guidance, use the links above. This file is intentionally short to make the site navigation easy to use.</p>
+<doc-anchor-target id="quick-operational-note">
+    <h2>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#quick-operational-note">#</doc-anchor-trigger>
+        <span>Quick operational note</span>
+    </h2>
+</doc-anchor-target>
+<p>This repository contains an enhanced remediation script that intentionally uses a &quot;log-first&quot; approach: detailed run-time entries (including per-user/profile details) are appended to a temporary per-run log file. The host console output intentionally emits only compact summaries (for example a user-profile pass will report &quot;RemovedCount=X; FailedCount=Y&quot;) to avoid exposing PII and to keep Intune-captured output concise.</p>
+<p>When testing or troubleshooting, run the script with a dry-run and verbose output to see more detail locally:</p>
+<div class="codeblock-wrapper"><doc-codeblock>
+<pre translate="no" class="language-powershell"><code v-pre class="language-powershell">.\intune\remediation\Win-Storage-Remediate.ps1 -DryRun -Verbosity Verbose</code></pre>
+</doc-codeblock></div>
+<p>Inspect the per-run temporary log (for example <code v-pre>%TEMP%\&lt;scriptName&gt;_temp.log</code>) for the full details of what would be removed.</p>
 <doc-anchor-target id="credits">
     <h2>
         <doc-anchor-trigger class="header-anchor-trigger" to="#credits">#</doc-anchor-trigger>

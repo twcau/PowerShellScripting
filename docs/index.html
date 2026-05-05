@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="turbo-root" content="/PowerShellScripting">
-    <meta name="turbo-cache-control" content="no-cache" data-turbo-track="reload" data-track-token="3.11.0.815049006535">
+    <meta name="turbo-cache-control" content="no-cache" data-turbo-track="reload" data-track-token="3.11.0.816013946385">
 
     <!-- See retype.com -->
     <meta name="generator" content="Retype 3.11.0">
@@ -34,12 +34,12 @@
     <script data-cfasync="false">(function(){var cl=document.documentElement.classList,ls=localStorage.getItem("retype_scheme"),hd=cl.contains("dark"),hl=cl.contains("light"),wm=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches;if(ls==="dark"||(!ls&&wm&&!hd&&!hl)){cl.remove("light");cl.add("dark")}else if(ls==="light"||(!ls&&!wm&&!hd&&!hl)){cl.remove("dark");cl.add("light")}})();</script>
 
     <link href="favicon.ico" rel="icon">
-    <link href="resources/css/retype.css?v=3.11.0.815049006535" rel="stylesheet">
+    <link href="resources/css/retype.css?v=3.11.0.816013946385" rel="stylesheet">
 
-    <script data-cfasync="false" src="resources/js/config.js?v=3.11.0.815049006535" data-turbo-eval="false" defer></script>
+    <script data-cfasync="false" src="resources/js/config.js?v=3.11.0.816013946385" data-turbo-eval="false" defer></script>
     <script data-cfasync="false" src="resources/js/retype.js?v=3.11.0" data-turbo-eval="false" defer></script>
-    <script id="lunr-js" data-cfasync="false" src="resources/js/lunr.js?v=3.11.0.815049006535" data-turbo-eval="false" defer></script>
-    <script id="prism-js" data-cfasync="false" src="resources/js/prism.js?v=3.11.0.815049006535" defer></script>
+    <script id="lunr-js" data-cfasync="false" src="resources/js/lunr.js?v=3.11.0.816013946385" data-turbo-eval="false" defer></script>
+    <script id="prism-js" data-cfasync="false" src="resources/js/prism.js?v=3.11.0.816013946385" defer></script>
 </head>
 <body>
     <div id="retype-app" class="relative text-base antialiased text-base-text bg-base-bg font-body">
@@ -213,33 +213,29 @@
 </li>
 <li><doc-anchor-trigger to="#configuration">Configuration</doc-anchor-trigger>
 <ul>
-<li><doc-anchor-trigger to="#environment-variables">Environment Variables</doc-anchor-trigger></li>
-<li><doc-anchor-trigger to="#authentication">Authentication</doc-anchor-trigger></li>
-<li><doc-anchor-trigger to="#customisation">Customisation</doc-anchor-trigger></li>
+<li><a href="configuration/">Configuration</a></li>
 </ul>
 </li>
 <li><doc-anchor-trigger to="#testing">Testing</doc-anchor-trigger>
 <ul>
-<li><doc-anchor-trigger to="#validation">Validation</doc-anchor-trigger></li>
+<li><a href="testing/">Testing</a></li>
 </ul>
 </li>
 <li><doc-anchor-trigger to="#logging-and-troubleshooting">Logging and Troubleshooting</doc-anchor-trigger>
 <ul>
-<li><doc-anchor-trigger to="#logging-standards">Logging Standards</doc-anchor-trigger></li>
-<li><doc-anchor-trigger to="#common-issues">Common Issues</doc-anchor-trigger></li>
-<li><doc-anchor-trigger to="#support-resources">Support Resources</doc-anchor-trigger></li>
+<li><a href="logging/">Logging and Troubleshooting</a></li>
 </ul>
 </li>
 <li><doc-anchor-trigger to="#accessibility">Accessibility</doc-anchor-trigger></li>
 <li><doc-anchor-trigger to="#contributing">Contributing</doc-anchor-trigger>
 <ul>
-<li><doc-anchor-trigger to="#development-guidelines">Development Guidelines</doc-anchor-trigger></li>
+<li><a href="contributing/">Development Guidelines</a></li>
 </ul>
 </li>
 <li><doc-anchor-trigger to="#changelog">Changelog</doc-anchor-trigger>
 <ul>
-<li><doc-anchor-trigger to="#recent-updates">Recent Updates</doc-anchor-trigger></li>
-<li><doc-anchor-trigger to="#version-history">Version History</doc-anchor-trigger></li>
+<li><a href="changelog/">Recent Updates</a></li>
+<li><a href="changelog/">Version History</a></li>
 </ul>
 </li>
 <li><doc-anchor-trigger to="#license">License</doc-anchor-trigger></li>
@@ -561,36 +557,9 @@
         <span>Configuration</span>
     </h2>
 </doc-anchor-target>
-<doc-anchor-target id="environment-variables">
-    <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#environment-variables">#</doc-anchor-trigger>
-        <span>Environment Variables</span>
-    </h3>
-</doc-anchor-target>
-<p>Some scripts may require environment-specific configuration. Review each script&#x27;s header for specific requirements.</p>
-<doc-anchor-target id="authentication">
-    <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#authentication">#</doc-anchor-trigger>
-        <span>Authentication</span>
-    </h3>
-</doc-anchor-target>
+<p>See the dedicated configuration page for environment variables, authentication notes and common customisations:</p>
 <ul>
-<li>Ensure you have appropriate administrative credentials</li>
-<li>Some scripts require multi-factor authentication (MFA)</li>
-<li>Consider using application passwords where applicable</li>
-</ul>
-<doc-anchor-target id="customisation">
-    <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#customisation">#</doc-anchor-trigger>
-        <span>Customisation</span>
-    </h3>
-</doc-anchor-target>
-<p>Scripts include configurable parameters at the top of each file. Common customisations include:</p>
-<ul>
-<li>Domain names and organisational units</li>
-<li>Email domains and Exchange settings</li>
-<li>Logging paths and retention policies</li>
-<li>Timeout values and retry attempts</li>
+<li><a href="configuration/">Configuration</a></li>
 </ul>
 <doc-anchor-target id="testing">
     <h2>
@@ -598,61 +567,19 @@
         <span>Testing</span>
     </h2>
 </doc-anchor-target>
-<doc-anchor-target id="validation">
-    <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#validation">#</doc-anchor-trigger>
-        <span>Validation</span>
-    </h3>
-</doc-anchor-target>
-<p>Before using scripts in production:</p>
-<ol>
-<li>Review the script header for version information and changelog</li>
-<li>Test in a non-production environment</li>
-<li>Verify all required modules are installed</li>
-<li>Check logging output for any warnings or errors</li>
-</ol>
+<p>See the testing page for validation guidance and pre-production checks:</p>
+<ul>
+<li><a href="testing/">Testing</a></li>
+</ul>
 <doc-anchor-target id="logging-and-troubleshooting">
     <h2>
         <doc-anchor-trigger class="header-anchor-trigger" to="#logging-and-troubleshooting">#</doc-anchor-trigger>
         <span>Logging and Troubleshooting</span>
     </h2>
 </doc-anchor-target>
-<doc-anchor-target id="logging-standards">
-    <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#logging-standards">#</doc-anchor-trigger>
-        <span>Logging Standards</span>
-    </h3>
-</doc-anchor-target>
-<p>All scripts are intended to follow consistent logging practices, which include:</p>
+<p>See the logging and troubleshooting page for standards, common issues and support resources:</p>
 <ul>
-<li>Log files stored in <code v-pre>$env:TEMP</code> with timestamps where appropriate</li>
-<li>Comprehensive error logging with context</li>
-<li>Success and failure reporting</li>
-<li>Progress indicators for long-running operations</li>
-</ul>
-<p>Script documentation will provide examples of what logging is provided, and samples of logging output.</p>
-<doc-anchor-target id="common-issues">
-    <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#common-issues">#</doc-anchor-trigger>
-        <span>Common Issues</span>
-    </h3>
-</doc-anchor-target>
-<ul>
-<li><strong>Module Import Errors</strong>: Ensure required PowerShell modules are installed</li>
-<li><strong>Authentication Failures</strong>: Verify credentials and MFA settings</li>
-<li><strong>Permission Errors</strong>: Check administrative rights for target systems</li>
-<li><strong>Network Connectivity</strong>: Ensure access to required cloud services</li>
-</ul>
-<doc-anchor-target id="support-resources">
-    <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#support-resources">#</doc-anchor-trigger>
-        <span>Support Resources</span>
-    </h3>
-</doc-anchor-target>
-<ul>
-<li>Check script headers for specific documentation links</li>
-<li>Review Microsoft documentation for API changes</li>
-<li>Consult PowerShell Gallery for module updates</li>
+<li><a href="logging/">Logging and Troubleshooting</a></li>
 </ul>
 <doc-anchor-target id="accessibility">
     <h2>
@@ -660,13 +587,9 @@
         <span>Accessibility</span>
     </h2>
 </doc-anchor-target>
-<p>This project is committed to accessibility and inclusive design:</p>
+<p>See the accessibility page for details on inclusive design and accessibility practices:</p>
 <ul>
-<li>Scripts include progress indicators and clear status messages</li>
-<li>Documentation uses descriptive text for all functionality</li>
-<li>Error messages provide actionable guidance</li>
-<li>GUI interfaces follow accessibility best practices</li>
-<li>All documentation supports screen readers</li>
+<li><a href="accessibility/">Accessibility</a></li>
 </ul>
 <doc-anchor-target id="contributing">
     <h2>
@@ -674,24 +597,9 @@
         <span>Contributing</span>
     </h2>
 </doc-anchor-target>
-<p>Contributions to improve and expand this script collection are welcome. Please read the contribution guidelines:</p>
-<ol>
-<li><strong>Code Standards</strong>: Follow PowerShell best practices and existing code style</li>
-<li><strong>Documentation</strong>: Include comprehensive headers and inline comments</li>
-<li><strong>Testing</strong>: Validate scripts in appropriate test environments</li>
-<li><strong>Security</strong>: Ensure no hardcoded credentials or sensitive information</li>
-</ol>
-<doc-anchor-target id="development-guidelines">
-    <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#development-guidelines">#</doc-anchor-trigger>
-        <span>Development Guidelines</span>
-    </h3>
-</doc-anchor-target>
+<p>See the contribution guidelines and development checklist:</p>
 <ul>
-<li>Use Australian English (EN-AU) for documentation and comments</li>
-<li>Include proper error handling and logging</li>
-<li>Follow the established folder structure</li>
-<li>Update this README when adding new functionality</li>
+<li><a href="contributing/">Contributing</a></li>
 </ul>
 <doc-anchor-target id="changelog">
     <h2>
@@ -699,49 +607,10 @@
         <span>Changelog</span>
     </h2>
 </doc-anchor-target>
-<doc-anchor-target id="recent-updates">
-    <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#recent-updates">#</doc-anchor-trigger>
-        <span>Recent Updates</span>
-    </h3>
-</doc-anchor-target>
-<p>Changelog for each script will be provided on its documentation page where relevant.</p>
+<p>See the project changelog and recent changes:</p>
 <ul>
-<li>Integrated CleanMgr registry preparation for selected VolumeCaches and invoked CleanMgr (/sagerun:1).</li>
-<li>Configured and triggered Storage Sense to remove temporary files and locally cached OneDrive content.</li>
-<li>Added DISM component store cleanup (StartComponentCleanup) with explicit exit-code logging.</li>
-<li>Added removal of user-specific temporary files (%USERPROFILE%\AppData\Local\Temp).</li>
-<li>Enhanced event log cleanup:
-<ul>
-<li>Improved error handling for individual logs to ensure the script continues processing other logs.</li>
+<li><a href="changelog/">Changelog</a></li>
 </ul>
-</li>
-<li>Added removal of old user profiles from C:\Users based on retention days ($userProfileRetentionDays).</li>
-<li>Centralised logging with Start-Transcript and Custom-WriteLog; log file located at $env:TEMP&lt;scriptName&gt;.log.</li>
-<li>Improved error handling so individual step failures are logged as warnings and the script continues.</li>
-<li>Exposed configuration variables for operational tuning:
-<ul>
-<li>$logsToClear: List of event logs to process.</li>
-</ul>
-</li>
-<li>Added initialisation of $freeSpaceGB to capture baseline free space before cleanup, ensuring accurate space-recovered reporting.</li>
-<li>Validated archive directory existence before appending or moving logs.</li>
-<li>Appended new logs to existing archive files or created new archive files as needed.</li>
-<li>Executed Disk Cleanup silently using the /VERYLOWDISK argument.</li>
-<li>Documented exit codes:
-<ul>
-<li>0 = Success</li>
-<li>1 = General failure (useful for external monitoring; individual step failures do not necessarily change the final exit code unless a fatal condition is detected).</li>
-</ul>
-</li>
-</ul>
-<doc-anchor-target id="version-history">
-    <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#version-history">#</doc-anchor-trigger>
-        <span>Version History</span>
-    </h3>
-</doc-anchor-target>
-<p>See individual script headers for detailed version history and changelog information.</p>
 <doc-anchor-target id="license">
     <h2>
         <doc-anchor-trigger class="header-anchor-trigger" to="#license">#</doc-anchor-trigger>

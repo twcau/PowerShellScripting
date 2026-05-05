@@ -1,0 +1,40 @@
+<Window x:Class="ScriptLauncher.Views.HistoryWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Config History" Height="420" Width="620" WindowStartupLocation="CenterOwner" Icon="/Assets/remotetools.ico">
+    <DockPanel>
+        <Grid Margin="10">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="_Scope:" VerticalAlignment="Center"/>
+                <ComboBox x:Name="ScopeCombo" Width="140" Margin="6,0,0,0" SelectionChanged="ScopeCombo_SelectionChanged">
+                    <ComboBoxItem Content="User"/>
+                    <ComboBoxItem Content="Global"/>
+                </ComboBox>
+            </StackPanel>
+
+            <Grid Grid.Row="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <ListBox x:Name="SnapshotsList" DisplayMemberPath="Content" SelectionChanged="SnapshotsList_SelectionChanged"/>
+                <DockPanel Grid.Row="1" Margin="0,8,0,0">
+                    <TextBlock Text="_Note:" VerticalAlignment="Center"/>
+                    <TextBox x:Name="NoteBox" Margin="6,0,0,0" Width="360"/>
+                    <Button Content="_Save Note" Width="110" Margin="8,0,0,0" Click="SaveNote_Click"/>
+                </DockPanel>
+            </Grid>
+
+            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                <Button Content="_View Diff" Width="110" Margin="0,0,8,0" Click="ViewDiff_Click"/>
+                <Button Content="_Restore" Width="110" Margin="0,0,8,0" Click="Restore_Click"/>
+                <Button Content="_Close" Width="110" Click="Close_Click"/>
+            </StackPanel>
+        </Grid>
+    </DockPanel>
+</Window>

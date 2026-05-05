@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="turbo-root" content="/PowerShellScripting">
-    <meta name="turbo-cache-control" content="no-cache" data-turbo-track="reload" data-track-token="3.11.0.815049006535">
+    <meta name="turbo-cache-control" content="no-cache" data-turbo-track="reload" data-track-token="3.11.0.816013946385">
 
     <!-- See retype.com -->
     <meta name="generator" content="Retype 3.11.0">
@@ -32,11 +32,11 @@
     <script data-cfasync="false">(function(){var cl=document.documentElement.classList,ls=localStorage.getItem("retype_scheme"),hd=cl.contains("dark"),hl=cl.contains("light"),wm=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches;if(ls==="dark"||(!ls&&wm&&!hd&&!hl)){cl.remove("light");cl.add("dark")}else if(ls==="light"||(!ls&&!wm&&!hd&&!hl)){cl.remove("dark");cl.add("light")}})();</script>
 
     <link href="../../../../../favicon.ico" rel="icon">
-    <link href="../../../../../resources/css/retype.css?v=3.11.0.815049006535" rel="stylesheet">
+    <link href="../../../../../resources/css/retype.css?v=3.11.0.816013946385" rel="stylesheet">
 
-    <script data-cfasync="false" src="../../../../../resources/js/config.js?v=3.11.0.815049006535" data-turbo-eval="false" defer></script>
+    <script data-cfasync="false" src="../../../../../resources/js/config.js?v=3.11.0.816013946385" data-turbo-eval="false" defer></script>
     <script data-cfasync="false" src="../../../../../resources/js/retype.js?v=3.11.0" data-turbo-eval="false" defer></script>
-    <script id="lunr-js" data-cfasync="false" src="../../../../../resources/js/lunr.js?v=3.11.0.815049006535" data-turbo-eval="false" defer></script>
+    <script id="lunr-js" data-cfasync="false" src="../../../../../resources/js/lunr.js?v=3.11.0.816013946385" data-turbo-eval="false" defer></script>
 </head>
 <body>
     <div id="retype-app" class="relative text-base antialiased text-base-text bg-base-bg font-body">
@@ -231,9 +231,14 @@
 <p>This page summarises the remediation actions performed by <code v-pre>Win-Storage-Remediate.ps1</code>, the inputs, outputs and exit codes.</p>
 <p><a href="https://github.com/twcau/PowerShellScripting/blob/main/intune/remediation/Win-Storage-Remediate.ps1" class="outbound" target="_blank"><span>View Remediation Script on GitHub</span><svg xmlns="http://www.w3.org/2000/svg" class="retype-outbound-trigger docs-icon ml-1" viewBox="0 0 24 24" role="presentation"><g fill="currentColor"><path d="M15.5 2.25a.75.75 0 0 1 .75-.75h5.5a.75.75 0 0 1 .75.75v5.5a.75.75 0 0 1-1.5 0V4.06l-6.22 6.22a.75.75 0 1 1-1.06-1.06L19.94 3h-3.69a.75.75 0 0 1-.75-.75Z"/><path d="M2.5 4.25c0-.966.784-1.75 1.75-1.75h8.5a.75.75 0 0 1 0 1.5h-8.5a.25.25 0 0 0-.25.25v15.5c0 .138.112.25.25.25h15.5a.25.25 0 0 0 .25-.25v-8.5a.75.75 0 0 1 1.5 0v8.5a1.75 1.75 0 0 1-1.75 1.75H4.25a1.75 1.75 0 0 1-1.75-1.75V4.25Z"/></g></svg></a></p>
 <ul>
-<li><doc-anchor-trigger to="#base-configuration-parameters">Base Configuration Parameters</doc-anchor-trigger>
+<li><doc-anchor-trigger to="#configuration-parameters">Configuration Parameters</doc-anchor-trigger>
 <ul>
-<li><doc-anchor-trigger to="#configuration">Configuration</doc-anchor-trigger></li>
+<li><doc-anchor-trigger to="#base-configuration">Base Configuration</doc-anchor-trigger></li>
+<li><doc-anchor-trigger to="#defining-what-cleanup-actions-to-run-with-per-activity-preferences">Defining what cleanup actions to run with per activity preferences</doc-anchor-trigger></li>
+</ul>
+</li>
+<li><doc-anchor-trigger to="#pre-activity-preferences-per-activity-toggles">Pre-activity preferences (per-activity toggles)</doc-anchor-trigger>
+<ul>
 <li><doc-anchor-trigger to="#defining-what-to-remove-with-cleanuptypeselection">Defining What to Remove with $cleanupTypeSelection</doc-anchor-trigger></li>
 <li><doc-anchor-trigger to="#defining-what-logs-to-clear-with-logstoclear">Defining what Logs to Clear with $logsToClear</doc-anchor-trigger></li>
 <li><doc-anchor-trigger to="#skippathpatterns--what-they-are-and-why-they-matter-region-0c">skipPathPatterns — what they are and why they matter (region 0C)</doc-anchor-trigger></li>
@@ -242,18 +247,23 @@
 <li><doc-anchor-trigger to="#functions-region-0d--summary-and-purpose">Functions (region 0D) — summary and purpose</doc-anchor-trigger></li>
 <li><doc-anchor-trigger to="#logic">Logic</doc-anchor-trigger></li>
 <li><doc-anchor-trigger to="#inputs">Inputs</doc-anchor-trigger></li>
-<li><doc-anchor-trigger to="#outputs">Outputs</doc-anchor-trigger></li>
+<li><doc-anchor-trigger to="#outputs">Outputs</doc-anchor-trigger>
+<ul>
+<li><doc-anchor-trigger to="#dism-and-pending-reboot-behaviour">DISM and pending reboot behaviour</doc-anchor-trigger></li>
+<li><doc-anchor-trigger to="#recycle-bin-estimation">Recycle Bin estimation</doc-anchor-trigger></li>
 </ul>
-<doc-anchor-target id="base-configuration-parameters">
+</li>
+</ul>
+<doc-anchor-target id="configuration-parameters">
     <h2>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#base-configuration-parameters">#</doc-anchor-trigger>
-        <span>Base Configuration Parameters</span>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#configuration-parameters">#</doc-anchor-trigger>
+        <span>Configuration Parameters</span>
     </h2>
 </doc-anchor-target>
-<doc-anchor-target id="configuration">
+<doc-anchor-target id="base-configuration">
     <h3>
-        <doc-anchor-trigger class="header-anchor-trigger" to="#configuration">#</doc-anchor-trigger>
-        <span>Configuration</span>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#base-configuration">#</doc-anchor-trigger>
+        <span>Base Configuration</span>
     </h3>
 </doc-anchor-target>
 <p>Contained within region 0C of the remediation script, these exposes a small set of configuration variables, which are explained below.</p>
@@ -281,7 +291,7 @@
 <tr>
 <td><code v-pre>$scriptName</code></td>
 <td>(string)</td>
-<td>Base name used for log files and archives (for example <code v-pre>Remediate-DiskCleanup-Extended</code> or <code v-pre>Win-Storage-Remediate</code>). See <doc-anchor-trigger to="#configuration">Remediation Script Configuration</doc-anchor-trigger>.</td>
+<td>Base name used for log files and archives (for example <code v-pre>Remediate-DiskCleanup-Extended</code> or <code v-pre>Win-Storage-Remediate</code>). See <doc-anchor-trigger to="#configuration-parameters">Remediation Script Configuration</doc-anchor-trigger>.</td>
 </tr>
 <tr>
 <td><code v-pre>$logFile</code> / <code v-pre>$tempLogFile</code> / <code v-pre>$archiveDirectory</code> / <code v-pre>$archiveFile</code></td>
@@ -309,6 +319,11 @@
 <td>Soft time budget (minutes) used by recursive enumeration/cleanup loops (for example user-temp and global-temp passes). Enumerators check elapsed time and stop when the budget is exceeded. See <doc-anchor-trigger to="#logic">Remediation Script Logic</doc-anchor-trigger>.</td>
 </tr>
 <tr>
+<td><code v-pre>$SKIP_SLOW_IO</code></td>
+<td>(switch/env)</td>
+<td>When set the script reduces retry/backoff and time budgets (useful for unit tests or slow VMs). This is propagated into the environment so helper code can detect fast-path mode.</td>
+</tr>
+<tr>
 <td><code v-pre>$cleanupTypeSelection</code></td>
 <td>(array)</td>
 <td><code v-pre>CleanMgr</code> VolumeCache categories configured for <code v-pre>cleanmgr.exe</code> registry preparation (the script sets <code v-pre>StateFlags0001</code> so <code v-pre>cleanmgr /sagerun:1</code> will include them). See <doc-anchor-trigger to="#defining-what-to-remove-with-cleanuptypeselection">Defining What to Remove with $cleanupTypeSelection</doc-anchor-trigger>.</td>
@@ -321,6 +336,114 @@
 </tbody>
 </table>
 </div>
+<doc-anchor-target id="defining-what-cleanup-actions-to-run-with-per-activity-preferences">
+    <h3>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#defining-what-cleanup-actions-to-run-with-per-activity-preferences">#</doc-anchor-trigger>
+        <span>Defining what cleanup actions to run with per activity preferences</span>
+    </h3>
+</doc-anchor-target>
+<p>Rather than having to customise the whole script, a set of parameters with true or false values have been defined, so you can choose what cleanup activities are run when the script is executed.</p>
+<p>Each associated cleanup activity will only run when the value is set to true, and if false it will provide specific logged output to indicate that it was not run and why.</p>
+<doc-anchor-target id="pre-activity-preferences-per-activity-toggles">
+    <h2>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#pre-activity-preferences-per-activity-toggles">#</doc-anchor-trigger>
+        <span>Pre-activity preferences (per-activity toggles)</span>
+    </h2>
+</doc-anchor-target>
+<p>The script exposes a small set of per-activity boolean preferences (variables prefixed with <code v-pre>$Pref_</code>) that gate whether a particular cleanup activity will run. These are declared near the top of <code v-pre>Win-Storage-Remediate.ps1</code> and can be used to disable or enable specific sections without editing the region logic.</p>
+<p>More information about these functions can be found in <a href="../remediation-logic/">Remediation Logic</a>.</p>
+<div class="table-wrapper scrollbar overflow-hidden">
+<table class="comfortable">
+<thead>
+<tr>
+<th>Preference variable</th>
+<th>What it does</th>
+<th style="text-align: right;">Default</th>
+<th>Permitted values</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code v-pre>$Pref_RemoveOldUserProfiles</code></td>
+<td>Enables removal of old user profiles under <code v-pre>C:\Users</code> (Region 2A). The logic honours a whitelist and age threshold (<code v-pre>$userProfileRetentionDays</code>).</td>
+<td style="text-align: right;"><code v-pre>$true</code></td>
+<td><code v-pre>$true</code> / <code v-pre>$false</code></td>
+</tr>
+<tr>
+<td><code v-pre>$Pref_OneDriveAndBrowserCache</code></td>
+<td>Enables per-user OneDrive and browser cache cleanup routines. Uses pruned enumerators and protected-path checks.</td>
+<td style="text-align: right;"><code v-pre>$true</code></td>
+<td><code v-pre>$true</code> / <code v-pre>$false</code></td>
+</tr>
+<tr>
+<td><code v-pre>$Pref_DeliveryOptimizationAndWU</code></td>
+<td>Enables Delivery Optimization and Windows Update download cache cleanup (<code v-pre>SoftwareDistribution\Download</code>, DO cache).</td>
+<td style="text-align: right;"><code v-pre>$true</code></td>
+<td><code v-pre>$true</code> / <code v-pre>$false</code></td>
+</tr>
+<tr>
+<td><code v-pre>$Pref_StorageSense</code></td>
+<td>Enables Storage Sense configuration and triggering where supported on the host.</td>
+<td style="text-align: right;"><code v-pre>$true</code></td>
+<td><code v-pre>$true</code> / <code v-pre>$false</code></td>
+</tr>
+<tr>
+<td><code v-pre>$Pref_DISMComponentStoreCleanup</code></td>
+<td>Enables the DISM component store cleanup pass (<code v-pre>Invoke-DISM-Safe</code>). This step may be long-running and may require elevation.</td>
+<td style="text-align: right;"><code v-pre>$true</code></td>
+<td><code v-pre>$true</code> / <code v-pre>$false</code></td>
+</tr>
+<tr>
+<td><code v-pre>$Pref_ForceDISMWhenPendingOverride</code></td>
+<td>File-level preference that forces DISM to run even when a pending reboot is detected. <code v-pre>Invoke-DISM-Safe</code> checks this preference in addition to the command-line <code v-pre>-ForceDISMWhenPending</code> switch. Use with caution.</td>
+<td style="text-align: right;"><code v-pre>$false</code></td>
+<td><code v-pre>$true</code> / <code v-pre>$false</code></td>
+</tr>
+<tr>
+<td><code v-pre>$Pref_EventLogCleanup</code></td>
+<td>Enables export and (on success) clearing of selected event logs via the <code v-pre>Export-EventLog</code> helper.</td>
+<td style="text-align: right;"><code v-pre>$true</code></td>
+<td><code v-pre>$true</code> / <code v-pre>$false</code></td>
+</tr>
+<tr>
+<td><code v-pre>$Pref_UserTempCleanup</code></td>
+<td>Enables per-user temp file cleanup (<code v-pre>Invoke-UserTempCleanup</code>).</td>
+<td style="text-align: right;"><code v-pre>$true</code></td>
+<td><code v-pre>$true</code> / <code v-pre>$false</code></td>
+</tr>
+<tr>
+<td><code v-pre>$Pref_GlobalTempCleanup</code></td>
+<td>Enables machine-wide/global TEMP folder cleanup (<code v-pre>Invoke-GlobalTempCleanup</code>).</td>
+<td style="text-align: right;"><code v-pre>$true</code></td>
+<td><code v-pre>$true</code> / <code v-pre>$false</code></td>
+</tr>
+<tr>
+<td><code v-pre>$Pref_CleanMgrPrep</code></td>
+<td>Enables preparation steps for <code v-pre>cleanmgr.exe</code> (preparing the list of cleanup types).</td>
+<td style="text-align: right;"><code v-pre>$true</code></td>
+<td><code v-pre>$true</code> / <code v-pre>$false</code></td>
+</tr>
+<tr>
+<td><code v-pre>$Pref_RunCleanMgr</code></td>
+<td>Enables running <code v-pre>cleanmgr.exe</code> to perform CleanMgr-based cleanup (when supported).</td>
+<td style="text-align: right;"><code v-pre>$true</code></td>
+<td><code v-pre>$true</code> / <code v-pre>$false</code></td>
+</tr>
+<tr>
+<td><code v-pre>$Pref_RemoveWindowsOld</code></td>
+<td>Enables removal of <code v-pre>C:\Windows.old</code>. Disabled by default as this is potentially destructive.</td>
+<td style="text-align: right;"><code v-pre>$false</code></td>
+<td><code v-pre>$true</code> / <code v-pre>$false</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Notes:</p>
+<ul>
+<li>The preferences are set in the script header; tests or automation can toggle them by editing the script or by supplying wrappers that set these variables in the execution session before invocation.</li>
+<li>All preferences are boolean; the script uses these variables directly to gate the corresponding region logic. When a preference is <code v-pre>$false</code> the region is skipped and a compact summary is recorded in the per-run temp log.</li>
+<li>Use <code v-pre>$Pref_ForceDISMWhenPendingOverride</code> sparingly — forcing DISM while a reboot is pending can interact poorly with servicing actions. Prefer the command-line <code v-pre>-ForceDISMWhenPending</code> switch for temporary overrides in automation.</li>
+</ul>
 <doc-anchor-target id="defining-what-to-remove-with-cleanuptypeselection">
     <h3>
         <doc-anchor-trigger class="header-anchor-trigger" to="#defining-what-to-remove-with-cleanuptypeselection">#</doc-anchor-trigger>
@@ -629,7 +752,7 @@
         <span>Inputs</span>
     </h2>
 </doc-anchor-target>
-<p>See <doc-anchor-trigger to="#configuration">Remediation Script Configuration</doc-anchor-trigger> for full information.</p>
+<p>See <doc-anchor-trigger to="#configuration-parameters">Remediation Script Configuration</doc-anchor-trigger> for full information.</p>
 <doc-anchor-target id="outputs">
     <h2>
         <doc-anchor-trigger class="header-anchor-trigger" to="#outputs">#</doc-anchor-trigger>
@@ -650,8 +773,27 @@
 </li>
 <li>Transcripts: the script uses <code v-pre>Start-Transcript</code> where available to capture console output. A temporary transcript is consolidated into the main log at the end of the run (or archived if locked).</li>
 <li>Archival behaviour: the script prefers an atomic <code v-pre>Move-Item</code> of the main log into a per-run archive file. If that fails it falls back to append+truncate into a single fallback archive file. If both approaches fail a diagnostic <code v-pre>.diag.txt</code> file is written into the archive directory containing the failure details.</li>
+<li>Log-first behaviour: <code v-pre>Write-CustomMessage</code> appends detailed per-run entries (including per-user/profile information) to a temporary per-run log file first. Host output is kept compact and is intended for Intune capture only; inspect the temp log for full details.</li>
 <li>Retry/backoff and time budgets: removal operations are implemented with per-item retry/backoff and limited by <code v-pre>$MaxCleanupDurationMinutes</code> in long enumerations so the script does not get stuck on a single locked/slow subtree.</li>
 <li>Dry-run semantics: when <code v-pre>-DryRun</code> is used the script will log intended actions (for example which files would be removed or archived) but not perform destructive actions like <code v-pre>Remove-Item</code> or <code v-pre>Move-Item</code>.</li>
+</ul>
+<doc-anchor-target id="dism-and-pending-reboot-behaviour">
+    <h3>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#dism-and-pending-reboot-behaviour">#</doc-anchor-trigger>
+        <span>DISM and pending reboot behaviour</span>
+    </h3>
+</doc-anchor-target>
+<ul>
+<li>The DISM component store cleanup step performs a pending reboot check and will skip cleanup if a pending reboot is detected. To override this behaviour use the <code v-pre>-ForceDISMWhenPending</code> parameter or set the file-level preference <code v-pre>$Pref_ForceDISMWhenPendingOverride = $true</code> when you intentionally want to force DISM to run.</li>
+</ul>
+<doc-anchor-target id="recycle-bin-estimation">
+    <h3>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#recycle-bin-estimation">#</doc-anchor-trigger>
+        <span>Recycle Bin estimation</span>
+    </h3>
+</doc-anchor-target>
+<ul>
+<li><code v-pre>Get-RecycleBinSize</code> now returns a stable numeric <code v-pre>[int64]</code> value. It attempts a COM-based Shell.Application query first and then falls back to a conservative per-user enumeration of <code v-pre>C:\Users\&lt;name&gt;\$Recycle.Bin</code> when COM is unavailable (for example under SYSTEM or constrained hosts). The fallback may under-report and returns <code v-pre>0</code> on failure.</li>
 </ul>
 
                                 

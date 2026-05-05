@@ -1,0 +1,48 @@
+{
+  "Categories": [
+    {
+      "Name": "AD",
+      "DefaultSort": 0,
+      "Scope": 0,
+      "Label": "AD (Global)"
+    },
+    {
+      "Name": "E365",
+      "DefaultSort": 0,
+      "Scope": 0,
+      "Label": "E365 (Global)"
+    },
+    {
+      "Name": "Intune",
+      "DefaultSort": 0,
+      "Scope": 0,
+      "Label": "Intune (Global)"
+    }
+  ],
+  "Scripts": [
+    {
+      "DisplayName": "AD - Find OU of a machine",
+      "Category": "AD",
+      "FilePath": "C:\\Users\\pc\\OneDrive - Crispy Kangaroo\\Documents\\GitProjects\\PowerShellScriptingNew\\ad\\computer\\FindMachineOU.ps1",
+      "RequiresAdmin": true,
+      "Scope": 0,
+      "PowerShellVersion": 7
+    },
+    {
+      "DisplayName": "E365 - Quarantine Data Export",
+      "Category": "AD",
+      "FilePath": "C:\\Users\\pc\\OneDrive - Crispy Kangaroo\\Documents\\GitProjects\\PowerShellScriptingNew\\e365\\E365-Quarantine-ExportRecord.ps1",
+      "RequiresAdmin": false,
+      "Scope": 0,
+      "PowerShellVersion": 7
+    },
+    {
+      "DisplayName": "InTune - Force Sync All Devices (Windows, Android, or iOS)",
+      "Category": "Intune",
+      "FilePath": "C:\\Users\\pc\\OneDrive - Crispy Kangaroo\\Documents\\GitProjects\\PowerShellScriptingNew\\intune\\devices\\Intune-BulkSync.ps1",
+      "RequiresAdmin": false,
+      "Scope": 0,
+      "PowerShellVersion": 7
+    }
+  ]
+}

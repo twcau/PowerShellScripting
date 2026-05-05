@@ -1,0 +1,67 @@
+[
+  {
+    "Serial": "1234567",
+    "EntraDeviceId": "56c3d7d8-3dae-4846-bcd0-bcc87de73722",
+    "ConfigItem": "23456789",
+    "SiteCode": "MU",
+    "DeviceType": "Desktop",
+    "GroupTag": null,
+    "Status": "new",
+    "Steps": {},
+    "StartedAt": "2025-12-01T21:34:11.8129895+08:00",
+    "StartedBy": "pc",
+    "LastUpdatedAt": "2025-12-01T23:16:18.2785452+08:00",
+    "LastUpdatedBy": "pc",
+    "CompletedAt": "0001-01-01T00:00:00",
+    "CompletedBy": "",
+    "IsCompletionVerified": false
+  },
+  {
+    "Serial": "1234567890",
+    "EntraDeviceId": "36b36022-2a5b-4ca5-ad9c-03bedb9baa3e",
+    "ConfigItem": "9876543210",
+    "SiteCode": "MI",
+    "DeviceType": "Desktop",
+    "GroupTag": "MI-Desktop",
+    "Status": "completed",
+    "Steps": {
+      "B": {
+        "Timestamp": "2025-12-01T23:17:15.2258689+08:00",
+        "Notes": "Bench quick-step",
+        "Success": true
+      },
+      "A": {
+        "Timestamp": "2025-12-01T23:17:10.7455081+08:00",
+        "Notes": "Bench quick-step",
+        "Success": true
+      },
+      "E": {
+        "Timestamp": "2025-12-01T23:17:30.2274083+08:00",
+        "Notes": "Bench quick-step",
+        "Success": true
+      },
+      "D": {
+        "Timestamp": "2025-12-01T23:17:27.3617166+08:00",
+        "Notes": "Bench quick-step",
+        "Success": true
+      },
+      "C": {
+        "Timestamp": "2025-12-01T23:17:19.1791501+08:00",
+        "Notes": "Bench quick-step",
+        "Success": true
+      },
+      "F": {
+        "Timestamp": "2025-12-01T23:17:32.2840525+08:00",
+        "Notes": "Bench quick-step",
+        "Success": true
+      }
+    },
+    "StartedAt": "2025-12-01T23:14:14.6225466+08:00",
+    "StartedBy": "pc",
+    "LastUpdatedAt": "2025-12-01T23:18:03.9442523+08:00",
+    "LastUpdatedBy": "pc",
+    "CompletedAt": "2025-12-01T23:18:03.9429623+08:00",
+    "CompletedBy": "pc",
+    "IsCompletionVerified": false
+  }
+]

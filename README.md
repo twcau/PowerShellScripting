@@ -1,4 +1,5 @@
 <!-- omit from toc -->
+
 # PowerShellScripting
 
 A collection of PowerShell scripts for enterprise IT administration, covering Active Directory, Microsoft 365, Exchange Online, Entra ID, and Intune management tasks that i've created over the years.
@@ -6,18 +7,20 @@ A collection of PowerShell scripts for enterprise IT administration, covering Ac
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![PowerShell Gallery](https://img.shields.io/badge/PowerShell-7.0+-blue.svg)](https://github.com/PowerShell/PowerShell)
 [![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey.svg)](https://www.microsoft.com/windows)
+[![Build: .NET (ScriptLauncher)](https://github.com/twcau/PowerShellScriptingNew/actions/workflows/dotnet-ci.yml/badge.svg)](https://github.com/twcau/PowerShellScriptingNew/actions/workflows/dotnet-ci.yml)
 
 ## Table of Contents
 
 - [Table of Contents](#table-of-contents)
 - [Features](#features)
 - [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
+  - [ScriptLauncher Prerequisites](#scriptlauncher-prerequisites)
   - [Installation](#installation)
 - [Usage](#usage)
   - [Basic Usage](#basic-usage)
   - [Script Categories](#script-categories)
   - [Interactive Scripts](#interactive-scripts)
+  - [Intune Autopilot Express CLI](#intune-autopilot-express-cli)
 - [Configuration](#configuration)
   - [Environment Variables](#environment-variables)
   - [Authentication](#authentication)
@@ -45,6 +48,13 @@ A collection of PowerShell scripts for enterprise IT administration, covering Ac
   - [Project Maintainer](#project-maintainer)
   - [Getting Help](#getting-help)
   - [Support Guidelines](#support-guidelines)
+- [ScriptLauncher: Build \& Publish](#scriptlauncher-build--publish)
+  - [Prerequisites](#prerequisites)
+  - [Build \& Run (Debug)](#build--run-debug)
+  - [CI Checks](#ci-checks)
+    - [Download Workflow Logs](#download-workflow-logs)
+  - [Publish Single EXE and Zip](#publish-single-exe-and-zip)
+  - [UI Interaction Standards (ScriptLauncher)](#ui-interaction-standards-scriptlauncher)
 
 ## Features
 
@@ -60,7 +70,7 @@ A collection of PowerShell scripts for enterprise IT administration, covering Ac
 
 ## Getting Started
 
-### Prerequisites
+### ScriptLauncher Prerequisites
 
 - PowerShell 7.0 or later
 - Windows operating system
@@ -125,6 +135,60 @@ Many scripts include GUI interfaces for ease of use:
 - Device selection interfaces
 - Progress indicators for long-running operations
 
+### Intune Autopilot Express CLI
+
+The technician-friendly, menu-driven CLI for rapid Autopilot preparation and tracking lives here:
+
+- Path: `intune/devices/autopilot-express/autopilot-express.ps1`
+- Manifest: `intune/devices/autopilot-express/autopilot-express.manifest.json`
+- Runtime settings: `intune/devices/autopilot-express/autopilot-express.runtime.json`
+
+How to run:
+
+1. Open PowerShell 7 in the repository root.
+2. Run live mode with `intune/devices/autopilot-express/autopilot-express.ps1 -Mode Live`.
+3. Run demonstration mode with `intune/devices/autopilot-express/autopilot-express.ps1 -Mode Demo`.
+4. Select your current site when prompted (default is shown). The site code is used to enforce the Group Tag format.
+5. Use the on-screen menu to perform common tasks.
+
+Current workflow coverage:
+
+- 1. Start work on a new device (capture Serial/CI, confirm Site, select Device Type, enforce Group Tag e.g., `MI-Desktop`)
+- 1. Run the manifest-driven Autopilot sequence (steps A-J cover Autopilot lookup, Intune cleanup, Group Tag application, deployment-profile confirmation, pre-provisioning group add/remove, userless-enrolment unblock, technician primary user, app retry, and final primary user assignment)
+- 1. Show outstanding work (devices with incomplete steps)
+- 1. Maintain device records
+- 1. Stats and summaries
+- 1. Enhancements (feature ideas; manifest-driven)
+- 1. Change site
+- 1. Build bench (positions grid with session persistence)
+
+Mode behaviour:
+
+- `Live` mode uses browser-based Microsoft Graph sign-in only and validates the runtime JSON before continuing.
+- `Demo` mode simulates browser sign-in plus every manifest and Graph-backed action, while still persisting progress, recent-user choices, and resume state.
+- Live and demo sessions are isolated from each other and prompt to resume or archive-and-start-clean when prior state exists.
+
+Build bench quick reference:
+
+- Displays a grid of positions sized to your window, with centred position numbers and truncated values for readability.
+- `I` = Induct new device
+- `S` = Start next step for a device
+- `V` = View all actions for a device
+- `D` = Dispatch and finish a device
+- `R` = Remove from position
+- `M` = Move device between positions
+- `E` = Exit build bench view
+
+Data and persistence:
+
+- Session JSON is written to `data/` when the repository path is writable.
+- If the repository path is read-only or behaves like a synced/reparse-point path that rejects new files, the script automatically falls back to `%LOCALAPPDATA%\PowerShellScriptingNew\AutopilotExpress\data`.
+- Separate per-user files are maintained for live and demo device records, recent users, and build-bench state.
+- Clean restarts archive the previous session automatically.
+- Live mode also maintains `autopilot-master-audit.json` for manager review of technician actions and resulting device/user outcomes.
+- Group Tag is enforced as `SITECODE-DeviceType` (no override) for consistency and policy compliance.
+- Required Graph scopes, modules, and tenant-specific values are externalised in the runtime JSON rather than hard-coded in the script body.
+
 ## Configuration
 
 ### Environment Variables
@@ -167,6 +231,8 @@ PowerShellScripting/
 │   ├── E365-Mailbox-ConvertToShared.ps1 # Convert mailboxes to shared
 │   ├── E365-Quarantine-ExportRecord.ps1 # Export quarantine records
 │   ├── Exchange-QuarantineTABL-DataDownload.ps1
+│   ├── quarantine-to-block-v1.ps1       # Legacy quarantine triage and TABL workflow
+│   ├── quarantine-to-block.ps1          # Current quarantine triage, TABL, DNSBL, and deletion workflow
 │   └── NewTransportRuleExecName.ps1     # Transport rule management
 ├── entra/                                 # Entra ID (Azure AD) scripts
 │   ├── AutomateCompromisedAccountRemediation.ps1
@@ -216,6 +282,8 @@ The scripts in this collection provide:
 
 - **User-Creation.ps1**: Comprehensive user creation with GUI interface
 - **Intune-BulkSync.ps1**: Mass device synchronisation for Intune environments
+- **Autopilot Express (CLI)**: `intune/devices/autopilot-express/autopilot-express.ps1` — Menu-driven technician workflow with build bench and per-user persistence
+- **quarantine-to-block.ps1**: Interactive Exchange Online quarantine triage with guided release, TABL blocking, optional DNSBL submission, and optional deletion. DNSBL reporting is explicit opt-in.
 - **AutomateCompromisedAccountRemediation.ps1**: Automated security response
 - **ScriptSelector.ps1**: Interactive menu system for script selection
 
@@ -237,6 +305,7 @@ Before using scripts in production:
 2. Test in a non-production environment
 3. Verify all required modules are installed
 4. Check logging output for any warnings or errors
+5. For `e365/quarantine-to-block.ps1`, verify release, TABL selection, and deletion behaviour in a test tenant first. DNSBL reporting now runs only when `-ReportToDnsbl` is passed, or when defaults mode is explicitly requested and the saved DNSBL preference is enabled.
 
 ## Logging and Troubleshooting
 
@@ -255,6 +324,7 @@ All scripts follow consistent logging practices:
 - **Authentication Failures**: Verify credentials and MFA settings
 - **Permission Errors**: Check administrative rights for target systems
 - **Network Connectivity**: Ensure access to required cloud services
+- **Quarantine-to-Block DNSBL Skips**: DNSBL reporting is explicit opt-in. The script skips DNSBL submission unless `-ReportToDnsbl` is supplied, or defaults mode is explicitly requested with DNSBL enabled in the saved preferences.
 
 ### Support Resources
 
@@ -292,6 +362,8 @@ Contributions to improve and expand this script collection are welcome. Please r
 
 ### Recent Updates
 
+- **28/04/2026**: Quarantine-to-Block now treats DNSBL reporting as explicit opt-in, keeps DNSBL scope roots separate during evaluation, expands function-level comment-based help across the script, and validates the workflow with dedicated regression tests for PSL loading, filter handling, export fallback, DNSBL gating, and block-expiry validation.
+- **30/01/2026**: Quarantine-to-Block workflow hardened: cancel on release grid now continues with zero releases; added `-IncludeProviderRoots` to opt-in common provider roots for candidate selection; zero-candidate diagnostics preview added; DNSBL and deletion steps gated strictly on domain selections; dry-run guidance documented.
 - **6/06/2025**: Enhanced user creation script with group copying improvements
 - **27/03/2025**: Added Clear Base User and Clear All User functionality
 - **21/05/2025**: Implemented base group validation and management
@@ -337,4 +409,85 @@ If these scripts have helped you in your IT administration tasks, consider:
 
 ---
 
-*This project follows Microsoft PowerShell best practices and maintains compatibility with enterprise IT environments.*
+_This project follows Microsoft PowerShell best practices and maintains compatibility with enterprise IT environments._
+
+## ScriptLauncher: Build & Publish
+
+The WPF-based ScriptLauncher app lives in `ScriptLauncher/`. It lets you organise and run PowerShell scripts by category, with per-user JSON config and optional elevation.
+
+### Prerequisites
+
+- Windows 10/11
+- .NET SDK 8 (LTS) or 10 (latest). Verify installation:
+
+```powershell
+dotnet --info
+```
+
+If SDK is missing, install via Winget:
+
+```powershell
+winget install Microsoft.DotNet.SDK.8
+# or
+winget install Microsoft.DotNet.SDK.10
+```
+
+This repo includes [global.json](global.json) to prefer SDK 8 and roll forward to newer SDKs if needed.
+
+### Build & Run (Debug)
+
+```powershell
+dotnet build ScriptLauncher\ScriptLauncher.csproj -c Debug
+dotnet run --project ScriptLauncher\ScriptLauncher.csproj
+```
+
+First run will prompt to browse an existing config or create `%AppData%\ScriptLauncher\scripts.json`.
+
+### CI Checks
+
+This repository includes automated CI for the WPF `ScriptLauncher` app. On pushes and pull requests to the default branches, GitHub Actions will:
+
+- Build with warnings treated as errors to enforce quality (`-warnaserror`).
+- Run an analyser sweep via `dotnet format analyzers` at diagnostic verbosity.
+- Capture a verbose build (`-v diag`) and upload both logs as workflow artefacts.
+
+Workflow: [.github/workflows/dotnet-ci.yml](.github/workflows/dotnet-ci.yml)
+
+Badge: See the status badge at the top of this README.
+
+#### Download Workflow Logs
+
+PR authors can download the CI logs for troubleshooting:
+
+1. Open your pull request on GitHub.
+2. Select the "Checks" tab, then choose ".NET Build & Analyzers (ScriptLauncher)".
+3. Open the latest workflow run for your commit.
+4. In the run summary, find the Artefacts section and download `scriptlauncher-logs`.
+5. The zip contains `analyzers-diagnostics.log` and `build-diagnostics.log`.
+
+### Publish Single EXE and Zip
+
+```powershell
+dotnet publish ScriptLauncher\ScriptLauncher.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
+Compress-Archive -Path ScriptLauncher\bin\Release\net8.0-windows\win-x64\publish\* -DestinationPath ScriptLauncher-win-x64.zip -Force
+```
+
+Distribute the `ScriptLauncher-win-x64.zip`; users can run `ScriptLauncher.exe`. On first launch, the app will discover or create the per-user config.
+
+### UI Interaction Standards (ScriptLauncher)
+
+- **Commands-only menus**: Menu items must use `Command` only (no duplicate `Click + Command`). Dialogs open via `CommandBindings` in `MainWindow.xaml.cs`.
+- **Single-press Esc close**: Every modal window implements a native-handle ESC hook (`HwndSource.AddHook` with `WM_KEYDOWN/VK_ESCAPE`) to close immediately, regardless of focused control or dropdowns.
+- **Owner assignment**: All modal dialogs are opened with `Owner = MainWindow` to ensure consistent modality and focus behaviour.
+- **No global Esc interceptors**: Avoid thread-level ESC interceptors; handle Esc per dialog to prevent unintended interactions.
+- **Accessibility**: Provide access keys in dialog buttons and consistent keyboard navigation (e.g., Tab behaviour in grids).
+
+These standards are enforced to maintain consistent, accessible UX and to prevent regressions like double-Esc or dialog respawn.
+in `MainWindow.xaml.cs`.
+
+- **Single-press Esc close**: Every modal window implements a native-handle ESC hook (`HwndSource.AddHook` with `WM_KEYDOWN/VK_ESCAPE`) to close immediately, regardless of focused control or dropdowns.
+- **Owner assignment**: All modal dialogs are opened with `Owner = MainWindow` to ensure consistent modality and focus behaviour.
+- **No global Esc interceptors**: Avoid thread-level ESC interceptors; handle Esc per dialog to prevent unintended interactions.
+- **Accessibility**: Provide access keys in dialog buttons and consistent keyboard navigation (e.g., Tab behaviour in grids).
+
+These standards are enforced to maintain consistent, accessible UX and to prevent regressions like double-Esc or dialog respawn.

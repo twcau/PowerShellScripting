@@ -1,0 +1,37 @@
+<Window x:Class="ScriptLauncher.Views.ShortcutsWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Keyboard Shortcuts" Width="480" WindowStartupLocation="CenterOwner" ResizeMode="NoResize" SizeToContent="WidthAndHeight" Icon="/Assets/remotetools.ico">
+    <Grid Margin="12">
+        <StackPanel>
+            <TextBlock Text="Keyboard Shortcuts" FontSize="18" FontWeight="Bold"/>
+            <TextBlock TextWrapping="Wrap" Margin="0,8,0,12">
+                <Run Text="Ctrl+R: Run selected script"/>
+                <LineBreak/>
+                <Run Text="Ctrl+I: Import configuration (scope chosen via dialog)"/>
+                <LineBreak/>
+                <Run Text="Ctrl+E: Export configuration (scope chosen via dialog)"/>
+                <LineBreak/>
+                <Run Text="Ctrl+S: Open Settings"/>
+                <LineBreak/>
+                <Run Text="Ctrl+H: Open History"/>
+                <LineBreak/>
+                <Run Text="Ctrl+Q: Exit"/>
+                <LineBreak/>
+                <Run Text="F1: About"/>
+            </TextBlock>
+            <TextBlock Text="Access Keys (Alt+ letter)" FontWeight="Bold" Margin="0,4,0,4"/>
+            <TextBlock TextWrapping="Wrap" Margin="0,0,0,12">
+                <Run Text="Alt+F: File menu"/>
+                <LineBreak/>
+                <Run Text="Alt+R: Run button"/>
+                <LineBreak/>
+                <Run Text="Alt+C: + Add Category (Settings)"/>
+                <LineBreak/>
+                <Run Text="Alt+S: + Add Script (Settings)"/>
+            </TextBlock>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="_Close" Width="100" IsDefault="True" IsCancel="True"/>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>

@@ -1,0 +1,60 @@
+<Window x:Class="ScriptLauncher.Views.PreferencesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Preferences"
+        Height="220"
+        Width="360"
+        WindowStartupLocation="CenterOwner"
+        Icon="/Assets/remotetools.ico">
+        <Grid Margin="12">
+                <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0"
+                           Grid.Row="0"
+                           Text="Auto-refresh (minutes):"
+                           VerticalAlignment="Center"/>
+                <TextBox Grid.Column="1"
+                         Grid.Row="0"
+                         x:Name="MinutesBox"
+                         Margin="8,0,0,0"
+                         Height="26"
+                         VerticalContentAlignment="Center"/>
+
+                <CheckBox Grid.ColumnSpan="2"
+                          Grid.Row="1"
+                          Margin="0,8,0,0"
+                          x:Name="BadgeCheck"
+                          Content="Show taskbar badge on changes"/>
+                <CheckBox Grid.ColumnSpan="2"
+                          Grid.Row="2"
+                          Margin="0,8,0,0"
+                          x:Name="ToastCheck"
+                          Content="Show toast notification on changes"/>
+
+                <StackPanel Grid.Row="3"
+                            Grid.ColumnSpan="2"
+                            Orientation="Horizontal"
+                            HorizontalAlignment="Right"
+                            Margin="0,12,0,0">
+                        <Button Width="90"
+                                Height="28"
+                                Margin="0,0,8,0"
+                                IsDefault="True"
+                                Content="_Save"
+                                Click="Save_Click"/>
+                        <Button Width="90"
+                                Height="28"
+                                IsCancel="True"
+                                Content="_Cancel"/>
+                </StackPanel>
+        </Grid>
+</Window>

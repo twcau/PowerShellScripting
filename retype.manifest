@@ -1,12 +1,15 @@
 {
   "version": "3.11.0",
-  "created": "2025-10-29T10:30:09Z",
+  "created": "2025-11-09T14:32:30Z",
   "files": [
     {
       "path": ".nojekyll"
     },
     {
       "path": "404.html"
+    },
+    {
+      "path": "accessibility\\index.html"
     },
     {
       "path": "assets\\favicon.ico"
@@ -16,6 +19,15 @@
     },
     {
       "path": "buy-me-a-kofi\\index.html"
+    },
+    {
+      "path": "changelog\\index.html"
+    },
+    {
+      "path": "configuration\\index.html"
+    },
+    {
+      "path": "contributing\\index.html"
     },
     {
       "path": "docs\\404.html",
@@ -256,6 +268,9 @@
       "old": true
     },
     {
+      "path": "logging\\index.html"
+    },
+    {
       "path": "resources\\css\\retype.css"
     },
     {
@@ -419,6 +434,9 @@
     },
     {
       "path": "sitemap.xml.gz"
+    },
+    {
+      "path": "testing\\index.html"
     },
     {
       "path": "user-guides\\testing\\index.html",

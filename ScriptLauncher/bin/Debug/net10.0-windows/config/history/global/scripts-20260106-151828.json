@@ -1,0 +1,62 @@
+{
+  "Categories": [
+    {
+      "Name": "AD",
+      "DefaultSort": 0,
+      "Scope": 0,
+      "Label": "AD (Global)"
+    },
+    {
+      "Name": "AD - User Management",
+      "DefaultSort": 0,
+      "Scope": 0,
+      "Label": "AD - User Management (Global)"
+    },
+    {
+      "Name": "E365",
+      "DefaultSort": 0,
+      "Scope": 0,
+      "Label": "E365 (Global)"
+    },
+    {
+      "Name": "Intune",
+      "DefaultSort": 0,
+      "Scope": 0,
+      "Label": "Intune (Global)"
+    }
+  ],
+  "Scripts": [
+    {
+      "DisplayName": "Password Generator",
+      "Category": "AD - User Management",
+      "FilePath": "C:\\Users\\pc\\OneDrive - Crispy Kangaroo\\Documents\\GitProjects\\PowerShellScriptingNew\\general\\password-generation\\Password-Generator.ps1",
+      "RequiresAdmin": false,
+      "Scope": 0,
+      "PowerShellVersion": 7
+    },
+    {
+      "DisplayName": "User Creation - External",
+      "Category": "AD - User Management",
+      "FilePath": "C:\\Users\\pc\\OneDrive - Crispy Kangaroo\\Documents\\GitProjects\\PowerShellScriptingNew\\entra\\Entra-UserExternal-Create.ps1",
+      "RequiresAdmin": true,
+      "Scope": 0,
+      "PowerShellVersion": 7
+    },
+    {
+      "DisplayName": "E365 - Quarantine Data Export",
+      "Category": "E365",
+      "FilePath": "C:\\Users\\pc\\OneDrive - Crispy Kangaroo\\Documents\\GitProjects\\PowerShellScriptingNew\\e365\\E365-Quarantine-ExportRecord.ps1",
+      "RequiresAdmin": false,
+      "Scope": 0,
+      "PowerShellVersion": 7
+    },
+    {
+      "DisplayName": "InTune - Force Sync All Devices (Windows, Android, or iOS)",
+      "Category": "Intune",
+      "FilePath": "C:\\Users\\pc\\OneDrive - Crispy Kangaroo\\Documents\\GitProjects\\PowerShellScriptingNew\\intune\\devices\\Intune-BulkSync.ps1",
+      "RequiresAdmin": false,
+      "Scope": 0,
+      "PowerShellVersion": 7
+    }
+  ]
+}

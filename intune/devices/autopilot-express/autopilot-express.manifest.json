@@ -1,0 +1,165 @@
+{
+  "manifestVersion": "1.0.0",
+  "menuTitle": "Autopilot workflow",
+  "steps": [
+    {
+      "id": "A",
+      "displayName": "Resolve Autopilot device by serial",
+      "enabled": true,
+      "actionName": "ResolveAutopilotDevice",
+      "executionType": "graph",
+      "summary": "Load the current Autopilot, Intune, and Entra context for this serial.",
+      "requiredPermissions": [
+        "DeviceManagementServiceConfig.ReadWrite.All",
+        "DeviceManagementManagedDevices.Read.All",
+        "Directory.Read.All"
+      ],
+      "graphEndpoints": [
+        "GET /beta/deviceManagement/windowsAutopilotDeviceIdentities?$filter=serialNumber eq '{serial}'",
+        "GET /v1.0/deviceManagement/managedDevices?$filter=serialNumber eq '{serial}'",
+        "GET /v1.0/devices?$filter=deviceId eq '{azureAdDeviceId}'"
+      ],
+      "notes": "If the serial is not present in Autopilot yet, hand off to the external upload guide and record that outcome."
+    },
+    {
+      "id": "B",
+      "displayName": "Delete associated Intune device",
+      "enabled": true,
+      "actionName": "RemoveAssociatedManagedDevice",
+      "executionType": "graph",
+      "summary": "Remove any existing Intune managed-device record before pre-provisioning begins.",
+      "requiredPermissions": ["DeviceManagementManagedDevices.ReadWrite.All"],
+      "graphEndpoints": [
+        "DELETE /v1.0/deviceManagement/managedDevices/{managedDeviceId}"
+      ],
+      "notes": "If no associated managed device exists, the step records that no cleanup was required."
+    },
+    {
+      "id": "C",
+      "displayName": "Apply required Group Tag",
+      "enabled": true,
+      "actionName": "ApplyGroupTag",
+      "executionType": "graph",
+      "summary": "Set the enforced SITECODE-DeviceType Group Tag on the Autopilot identity.",
+      "requiredPermissions": ["DeviceManagementServiceConfig.ReadWrite.All"],
+      "graphEndpoints": [
+        "POST /beta/deviceManagement/windowsAutopilotDeviceIdentities/{autopilotDeviceId}/updateDeviceProperties"
+      ],
+      "notes": "The script always derives the Group Tag from the selected site and device type."
+    },
+    {
+      "id": "D",
+      "displayName": "Validate deployment profile assignment",
+      "enabled": true,
+      "actionName": "ValidateDeploymentProfile",
+      "executionType": "guided",
+      "summary": "Confirm that the required Autopilot deployment profile is assigned.",
+      "requiredPermissions": ["DeviceManagementServiceConfig.Read.All"],
+      "graphEndpoints": [
+        "GET /beta/deviceManagement/windowsAutopilotDeviceIdentities/{autopilotDeviceId}"
+      ],
+      "notes": "This release records technician confirmation so the workflow stays honest even where tenant-specific profile fields vary."
+    },
+    {
+      "id": "E",
+      "displayName": "Add device to pre-provisioning group",
+      "enabled": true,
+      "actionName": "AddToPreProvisioningGroup",
+      "executionType": "graph",
+      "summary": "Add the Entra device object to the configured Intune pre-provisioning group.",
+      "requiredPermissions": [
+        "Group.ReadWrite.All",
+        "GroupMember.ReadWrite.All",
+        "Directory.Read.All"
+      ],
+      "graphEndpoints": [
+        "GET /v1.0/groups?$filter=displayName eq '{groupName}'",
+        "POST /v1.0/groups/{groupId}/members/$ref"
+      ],
+      "notes": "Group membership is part of the formal manifest because it must happen at the correct point in the Autopilot flow."
+    },
+    {
+      "id": "F",
+      "displayName": "Clear Userless Enrolment Status block",
+      "enabled": true,
+      "actionName": "ClearUserlessEnrollmentStatus",
+      "executionType": "graph",
+      "summary": "Invoke the documented allowNextEnrollment action to clear the Userless Enrolment Status gate.",
+      "requiredPermissions": ["DeviceManagementServiceConfig.ReadWrite.All"],
+      "graphEndpoints": [
+        "POST /beta/deviceManagement/windowsAutopilotDeviceIdentities/{autopilotDeviceId}/allowNextEnrollment"
+      ],
+      "notes": "The workflow now clears the gate directly against the Autopilot device identity instead of relying on technician-only confirmation."
+    },
+    {
+      "id": "G",
+      "displayName": "Assign technician as primary user",
+      "enabled": true,
+      "actionName": "AssignTechnicianPrimaryUser",
+      "executionType": "hybrid",
+      "summary": "Assign the authenticated technician account across the available Autopilot and managed-device user-assignment surfaces.",
+      "requiredPermissions": [
+        "DeviceManagementServiceConfig.ReadWrite.All",
+        "DeviceManagementManagedDevices.ReadWrite.All",
+        "User.Read.All",
+        "Directory.Read.All"
+      ],
+      "graphEndpoints": [
+        "POST /v1.0/deviceManagement/windowsAutopilotDeviceIdentities/{autopilotDeviceId}/assignUserToDevice",
+        "POST /v1.0/deviceManagement/managedDevices('{managedDeviceId}')/users/$ref"
+      ],
+      "notes": "The target account must be the authenticated active C/E account. Managed-device association uses a raw Graph fallback because the PowerShell SDK exposes a reader but no writer for that relation."
+    },
+    {
+      "id": "H",
+      "displayName": "Retry failed application installations",
+      "enabled": true,
+      "actionName": "RetryFailedApplications",
+      "executionType": "hybrid",
+      "summary": "Issue a sync and then record whether failed application installs have retried successfully.",
+      "requiredPermissions": ["DeviceManagementManagedDevices.ReadWrite.All"],
+      "graphEndpoints": [
+        "POST /v1.0/deviceManagement/managedDevices/{managedDeviceId}/syncDevice"
+      ],
+      "notes": "The sync is automated; the application retry outcome is still confirmed by the technician."
+    },
+    {
+      "id": "I",
+      "displayName": "Remove device from pre-provisioning group",
+      "enabled": true,
+      "actionName": "RemoveFromPreProvisioningGroup",
+      "executionType": "graph",
+      "summary": "Remove the device from the configured pre-provisioning group at the correct workflow point.",
+      "requiredPermissions": [
+        "Group.ReadWrite.All",
+        "GroupMember.ReadWrite.All",
+        "Directory.Read.All"
+      ],
+      "graphEndpoints": [
+        "DELETE /v1.0/groups/{groupId}/members/{directoryObjectId}/$ref"
+      ],
+      "notes": "This mirrors the PDF workflow and must remain explicit in the manifest."
+    },
+    {
+      "id": "J",
+      "displayName": "Assign final primary user",
+      "enabled": true,
+      "actionName": "AssignFinalPrimaryUser",
+      "executionType": "hybrid-selection",
+      "summary": "Search for an active C/E caregiver or manager account and assign it across the available Autopilot and managed-device user-assignment surfaces.",
+      "requiredPermissions": [
+        "DeviceManagementServiceConfig.ReadWrite.All",
+        "DeviceManagementManagedDevices.ReadWrite.All",
+        "User.Read.All",
+        "Directory.Read.All"
+      ],
+      "graphEndpoints": [
+        "GET /v1.0/users?$filter=startswith(userPrincipalName,'{query}')",
+        "GET /v1.0/users?$filter=startswith(displayName,'{query}') or startswith(givenName,'{query}') or startswith(surname,'{query}')",
+        "POST /v1.0/deviceManagement/windowsAutopilotDeviceIdentities/{autopilotDeviceId}/assignUserToDevice",
+        "POST /v1.0/deviceManagement/managedDevices('{managedDeviceId}')/users/$ref"
+      ],
+      "notes": "Selection is filtered to active C/E accounts only. Managed-device association uses a raw Graph fallback because the PowerShell SDK exposes a reader but no writer for that relation."
+    }
+  ]
+}

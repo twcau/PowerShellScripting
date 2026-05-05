@@ -1,0 +1,162 @@
+2025-11-09 22:38:20 - INFO - Moved main log to per-run archive: C:\Users\pc\AppData\Local\Temp\ArchivedLogs\Win-Storage-Remediate-20251109_223820.log and recreated main log path: C:\Users\pc\AppData\Local\Temp\Win-Storage-Remediate.log
+2025-11-09 22:53:26 - INFO - Previous log file backed up to: C:\Users\pc\AppData\Local\Temp\Win-Storage-Remediate.log.bak
+2025-11-09 22:53:26 - INFO - Intune free space remediation script
+2025-11-09 22:53:26 - INFO - ====================================
+2025-11-09 22:53:26 - INFO - 
+2025-11-09 22:53:26 - INFO - Commencing script
+2025-11-09 22:53:26 - INFO - 
+2025-11-09 22:53:26 - INFO - Initial free space: 130.48 GB (133608.66 MB)
+2025-11-09 22:53:26 - INFO - Checking for user profiles not used in the last 30 days.
+2025-11-09 22:53:27 - INFO - User profile cleanup completed. RemovedCount=0; FailedCount=0
+2025-11-09 22:53:27 - INFO - Starting additional non-rebooting cleanup steps: OneDrive cache, and browser caches
+2025-11-09 22:53:27 - INFO - Scanning OneDrive cache folder: C:\Users\pc\AppData\Local\Microsoft\OneDrive
+2025-11-09 22:53:27 - INFO - Skipping protected directory in OneDrive cache: C:\Users\pc\AppData\Local\Microsoft\OneDrive\EBWebView
+2025-11-09 22:53:27 - INFO - Skipping protected directory in OneDrive cache: C:\Users\pc\AppData\Local\Microsoft\OneDrive\ListSync
+2025-11-09 22:53:27 - INFO - Skipping protected directory in OneDrive cache: C:\Users\pc\AppData\Local\Microsoft\OneDrive\logs
+2025-11-09 22:53:27 - INFO - Skipping protected directory in OneDrive cache: C:\Users\pc\AppData\Local\Microsoft\OneDrive\settings
+2025-11-09 22:53:27 - INFO - Skipping protected directory in OneDrive cache: C:\Users\pc\AppData\Local\Microsoft\OneDrive\setup
+2025-11-09 22:53:27 - INFO - Skipping protected directory in OneDrive cache: C:\Users\pc\AppData\Local\Microsoft\OneDrive\Update
+2025-11-09 22:53:27 - INFO - Clearing browser cache at: C:\Users\pc\AppData\Local\Microsoft\Edge\User Data\Default\Cache
+2025-11-09 22:53:27 - INFO - Pruned skip-path branch: C:\Users\pc\AppData\Local\Microsoft\Edge\User Data\Default\Cache
+2025-11-09 22:53:27 - INFO - Clearing browser cache at: C:\Users\pc\AppData\Local\Mozilla\Firefox\Profiles
+2025-11-09 22:53:27 - INFO - Pruned skip-path branch: C:\Users\pc\AppData\Local\Mozilla\Firefox\Profiles
+2025-11-09 22:53:27 - INFO - Additional non-rebooting cleanup completed: OneDrive cache, and browser caches.
+2025-11-09 22:53:27 - INFO - Starting additional non-rebooting cleanup steps: Delivery Optimization, and Windows Update download cache.
+2025-11-09 22:53:27 - INFO - Clearing Delivery Optimization cache at: C:\WINDOWS\SoftwareDistribution\Download
+2025-11-09 22:53:27 - INFO - Pruned skip-path branch: C:\Windows\SoftwareDistribution\Download
+2025-11-09 22:53:27 - INFO - Clearing Windows Update download cache at: C:\WINDOWS\SoftwareDistribution\Download
+2025-11-09 22:53:27 - INFO - DeliveryOptimization content folder not found: C:\ProgramData\DeliveryOptimization
+2025-11-09 22:53:27 - INFO - Additional non-rebooting cleanup completed: Delivery Optimization, and Windows Update.
+2025-11-09 22:53:27 - INFO - WARNING: Set-StorageSense cmdlet not available. Skipping Storage Sense configuration.
+2025-11-09 22:53:27 - INFO - WARNING: Set-StorageSenseConfiguration cmdlet not available. Skipping OneDrive content cleanup configuration.
+2025-11-09 22:53:27 - INFO - Checking for pending operations before DISM cleanup.
+2025-11-09 22:53:27 - WARN - WARNING: Pending reboot detected. Skipping DISM cleanup as it may be incomplete until reboot occurs.
+2025-11-09 22:53:27 - INFO - Starting event log cleanup. Logs to process: Application, System, Security, Setup, Forwarded Events, Microsoft-Windows-PowerShell/Operational, Microsoft-Windows-WindowsUpdateClient/Operational, Microsoft-Windows-TerminalServices-LocalSessionManager/Operational, Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational, Microsoft-Windows-GroupPolicy/Operational, HardwareEvents, Microsoft-Windows-Windows Defender/Operational, Microsoft-Windows-TaskScheduler/Operational, Microsoft-Windows-NetworkProfile/Operational, Microsoft-Windows-NetworkProvider/Operational, Microsoft-Windows-User Profile Service/Operational, Microsoft-Windows-Eventlog/Operational, Microsoft-Windows-Diagnostics-Performance/Operational, Microsoft-Windows-Application-Experience/Program-Inventory, Microsoft-Windows-Application-Experience/Program-Telemetry
+2025-11-09 22:53:27 - INFO - Exporting log: Application to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Application_20251109_225327.evtx
+2025-11-09 22:53:27 - INFO - Successfully exported log: Application to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Application_20251109_225327.evtx
+2025-11-09 22:53:27 - INFO - Cleared log: Application
+2025-11-09 22:53:27 - INFO - Exporting log: System to C:\Users\pc\AppData\Local\Temp\EventLogArchives\System_20251109_225327.evtx
+2025-11-09 22:53:27 - INFO - Successfully exported log: System to C:\Users\pc\AppData\Local\Temp\EventLogArchives\System_20251109_225327.evtx
+2025-11-09 22:53:27 - INFO - Cleared log: System
+2025-11-09 22:53:27 - INFO - Exporting log: Security to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Security_20251109_225327.evtx
+2025-11-09 22:53:27 - INFO - Successfully exported log: Security to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Security_20251109_225327.evtx
+2025-11-09 22:53:27 - INFO - Cleared log: Security
+2025-11-09 22:53:27 - INFO - Exporting log: Setup to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Setup_20251109_225327.evtx
+2025-11-09 22:53:27 - INFO - Successfully exported log: Setup to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Setup_20251109_225327.evtx
+2025-11-09 22:53:27 - INFO - Cleared log: Setup
+2025-11-09 22:53:27 - INFO - Log not found: Forwarded Events
+2025-11-09 22:53:27 - INFO - Exporting log: Microsoft-Windows-PowerShell/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-PowerShell_Operational_20251109_225327.evtx
+2025-11-09 22:53:28 - INFO - Successfully exported log: Microsoft-Windows-PowerShell/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-PowerShell_Operational_20251109_225327.evtx
+2025-11-09 22:53:28 - INFO - Cleared log: Microsoft-Windows-PowerShell/Operational
+2025-11-09 22:53:28 - INFO - Exporting log: Microsoft-Windows-WindowsUpdateClient/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-WindowsUpdateClient_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Successfully exported log: Microsoft-Windows-WindowsUpdateClient/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-WindowsUpdateClient_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Cleared log: Microsoft-Windows-WindowsUpdateClient/Operational
+2025-11-09 22:53:28 - INFO - Exporting log: Microsoft-Windows-TerminalServices-LocalSessionManager/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-TerminalServices-LocalSessionManager_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Successfully exported log: Microsoft-Windows-TerminalServices-LocalSessionManager/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-TerminalServices-LocalSessionManager_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Cleared log: Microsoft-Windows-TerminalServices-LocalSessionManager/Operational
+2025-11-09 22:53:28 - INFO - Exporting log: Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-TerminalServices-RemoteConnectionManager_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Successfully exported log: Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-TerminalServices-RemoteConnectionManager_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Cleared log: Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational
+2025-11-09 22:53:28 - INFO - Exporting log: Microsoft-Windows-GroupPolicy/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-GroupPolicy_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Successfully exported log: Microsoft-Windows-GroupPolicy/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-GroupPolicy_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Cleared log: Microsoft-Windows-GroupPolicy/Operational
+2025-11-09 22:53:28 - INFO - Exporting log: HardwareEvents to C:\Users\pc\AppData\Local\Temp\EventLogArchives\HardwareEvents_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Successfully exported log: HardwareEvents to C:\Users\pc\AppData\Local\Temp\EventLogArchives\HardwareEvents_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Cleared log: HardwareEvents
+2025-11-09 22:53:28 - INFO - Exporting log: Microsoft-Windows-Windows Defender/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-Windows Defender_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Successfully exported log: Microsoft-Windows-Windows Defender/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-Windows Defender_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Cleared log: Microsoft-Windows-Windows Defender/Operational
+2025-11-09 22:53:28 - INFO - Exporting log: Microsoft-Windows-TaskScheduler/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-TaskScheduler_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Successfully exported log: Microsoft-Windows-TaskScheduler/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-TaskScheduler_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Cleared log: Microsoft-Windows-TaskScheduler/Operational
+2025-11-09 22:53:28 - INFO - Exporting log: Microsoft-Windows-NetworkProfile/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-NetworkProfile_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Successfully exported log: Microsoft-Windows-NetworkProfile/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-NetworkProfile_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Cleared log: Microsoft-Windows-NetworkProfile/Operational
+2025-11-09 22:53:28 - INFO - Exporting log: Microsoft-Windows-NetworkProvider/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-NetworkProvider_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Successfully exported log: Microsoft-Windows-NetworkProvider/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-NetworkProvider_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Cleared log: Microsoft-Windows-NetworkProvider/Operational
+2025-11-09 22:53:28 - INFO - Exporting log: Microsoft-Windows-User Profile Service/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-User Profile Service_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Successfully exported log: Microsoft-Windows-User Profile Service/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-User Profile Service_Operational_20251109_225328.evtx
+2025-11-09 22:53:28 - INFO - Cleared log: Microsoft-Windows-User Profile Service/Operational
+2025-11-09 22:53:28 - INFO - Log not found: Microsoft-Windows-Eventlog/Operational
+2025-11-09 22:53:29 - INFO - Exporting log: Microsoft-Windows-Diagnostics-Performance/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-Diagnostics-Performance_Operational_20251109_225329.evtx
+2025-11-09 22:53:29 - INFO - Successfully exported log: Microsoft-Windows-Diagnostics-Performance/Operational to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-Diagnostics-Performance_Operational_20251109_225329.evtx
+2025-11-09 22:53:29 - INFO - Cleared log: Microsoft-Windows-Diagnostics-Performance/Operational
+2025-11-09 22:53:29 - INFO - Exporting log: Microsoft-Windows-Application-Experience/Program-Inventory to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-Application-Experience_Program-Inventory_20251109_225329.evtx
+2025-11-09 22:53:29 - INFO - Successfully exported log: Microsoft-Windows-Application-Experience/Program-Inventory to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-Application-Experience_Program-Inventory_20251109_225329.evtx
+2025-11-09 22:53:29 - INFO - Cleared log: Microsoft-Windows-Application-Experience/Program-Inventory
+2025-11-09 22:53:29 - INFO - Exporting log: Microsoft-Windows-Application-Experience/Program-Telemetry to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-Application-Experience_Program-Telemetry_20251109_225329.evtx
+2025-11-09 22:53:29 - INFO - Successfully exported log: Microsoft-Windows-Application-Experience/Program-Telemetry to C:\Users\pc\AppData\Local\Temp\EventLogArchives\Microsoft-Windows-Application-Experience_Program-Telemetry_20251109_225329.evtx
+2025-11-09 22:53:29 - INFO - Cleared log: Microsoft-Windows-Application-Experience/Program-Telemetry
+2025-11-09 22:53:29 - INFO - Event log cleanup completed.
+2025-11-09 22:53:29 - INFO - Cleaning user-specific temporary files at C:\Users\pc\AppData\Local\Temp
+2025-11-09 22:53:29 - INFO - Pruned skip-path branch: C:\Users\pc\AppData\Local\Temp
+2025-11-09 22:53:29 - INFO - Completed temp cleanup pass for C:\Users\pc\AppData\Local\Temp (excluding log directory).
+2025-11-09 22:53:29 - INFO - Configured CleanMgr for Downloaded Program Files.
+2025-11-09 22:53:29 - INFO - Skipped missing CleanMgr category: GameNewsFiles.
+2025-11-09 22:53:29 - INFO - Skipped missing CleanMgr category: GameStatisticsFiles.
+2025-11-09 22:53:29 - INFO - Skipped missing CleanMgr category: GameUpdateFiles.
+2025-11-09 22:53:29 - INFO - Skipped missing CleanMgr category: Memory Dump Files.
+2025-11-09 22:53:29 - INFO - Configured CleanMgr for Old ChkDsk Files.
+2025-11-09 22:53:29 - INFO - Configured CleanMgr for Recycle Bin.
+2025-11-09 22:53:29 - INFO - Configured CleanMgr for System error memory dump files.
+2025-11-09 22:53:29 - INFO - Configured CleanMgr for System error minidump files.
+2025-11-09 22:53:29 - INFO - Configured CleanMgr for Temporary Files.
+2025-11-09 22:53:29 - INFO - Configured CleanMgr for Temporary Sync Files.
+2025-11-09 22:53:29 - INFO - Configured CleanMgr for Update Cleanup.
+2025-11-09 22:53:29 - INFO - Configured CleanMgr for Upgrade Discarded Files.
+2025-11-09 22:53:29 - INFO - Skipped missing CleanMgr category: Windows Error Reporting Archive Files.
+2025-11-09 22:53:29 - INFO - Skipped missing CleanMgr category: Windows Error Reporting System Archive Files.
+2025-11-09 22:53:29 - INFO - Configured CleanMgr for Windows ESD installation files.
+2025-11-09 22:53:29 - INFO - Configured CleanMgr for Windows Upgrade Log Files.
+2025-11-09 22:53:29 - INFO - Configured CleanMgr for Internet Cache Files.
+2025-11-09 22:53:29 - INFO - Prepared CleanMgr categories; CleanMgr run will be invoked using /sagerun:1 to apply configured categories.
+2025-11-09 22:53:29 - INFO - CleanMgr diagnostic: enumerating configured VolumeCaches keys and their StateFlags0001 values.
+2025-11-09 22:53:29 - INFO - CleanMgr diagnostic: Category='Active Setup Temp Folders', StateFlags0001=<not set>
+2025-11-09 22:53:29 - INFO - CleanMgr diagnostic: Category='BranchCache', StateFlags0001=<not set>
+2025-11-09 22:53:29 - INFO - CleanMgr diagnostic: Category='Content Indexer Cleaner', StateFlags0001=<not set>
+2025-11-09 22:53:29 - INFO - CleanMgr diagnostic: Category='D3D Shader Cache', StateFlags0001=<not set>
+2025-11-09 22:53:29 - INFO - CleanMgr diagnostic: Category='Delivery Optimization Files', StateFlags0001=<not set>
+2025-11-09 22:53:29 - INFO - CleanMgr diagnostic: Category='Device Driver Packages', StateFlags0001=<not set>
+2025-11-09 22:53:29 - INFO - CleanMgr diagnostic: Category='Diagnostic Data Viewer database files', StateFlags0001=<not set>
+2025-11-09 22:53:29 - INFO - CleanMgr diagnostic: Category='Downloaded Program Files', StateFlags0001=2
+2025-11-09 22:53:29 - INFO - CleanMgr diagnostic: Category='DownloadsFolder', StateFlags0001=<not set>
+2025-11-09 22:53:29 - INFO - CleanMgr diagnostic: Category='Feedback Hub Archive log files', StateFlags0001=<not set>
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Internet Cache Files', StateFlags0001=2
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Language Pack', StateFlags0001=<not set>
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Offline Pages Files', StateFlags0001=<not set>
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Old ChkDsk Files', StateFlags0001=2
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Previous Installations', StateFlags0001=<not set>
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Recycle Bin', StateFlags0001=2
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='RetailDemo Offline Content', StateFlags0001=<not set>
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Setup Log Files', StateFlags0001=<not set>
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='System error memory dump files', StateFlags0001=2
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='System error minidump files', StateFlags0001=2
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Temporary Files', StateFlags0001=2
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Temporary Setup Files', StateFlags0001=<not set>
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Temporary Sync Files', StateFlags0001=2
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Thumbnail Cache', StateFlags0001=<not set>
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Update Cleanup', StateFlags0001=2
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Upgrade Discarded Files', StateFlags0001=2
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='User file versions', StateFlags0001=<not set>
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Windows Defender', StateFlags0001=<not set>
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Windows Error Reporting Files', StateFlags0001=<not set>
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Windows ESD installation files', StateFlags0001=2
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Windows Reset Log Files', StateFlags0001=<not set>
+2025-11-09 22:53:30 - INFO - CleanMgr diagnostic: Category='Windows Upgrade Log Files', StateFlags0001=2
+2025-11-09 22:53:37 - INFO - Invoking CleanMgr to apply configured categories (/sagerun:1).
+2025-11-09 22:54:43 - INFO - CleanMgr completed with exit code 0.
+2025-11-09 22:54:50 - INFO - Probe delta: Path='C:\Users\pc\AppData\Local\Temp', Before=14137793370 bytes (13482.85 MB), After=14137796336 bytes (13482.85 MB), Freed=-0 MB (-0 GB)
+2025-11-09 22:54:50 - INFO - Probe delta: Path='C:\Windows\Temp', Before=100324844 bytes (95.68 MB), After=100327468 bytes (95.68 MB), Freed=-0 MB (-0 GB)
+2025-11-09 22:54:50 - INFO - Probe delta: Path='C:\WINDOWS\SoftwareDistribution\Download', Before=592288 bytes (0.56 MB), After=592288 bytes (0.56 MB), Freed=0 MB (0 GB)
+2025-11-09 22:54:50 - INFO - Probe delta: Path='C:\WINDOWS\\Downloaded Program Files', Before=65 bytes (0 MB), After=65 bytes (0 MB), Freed=0 MB (0 GB)
+2025-11-09 22:54:50 - INFO - SKIPPED: Removal of C:\Windows.old is disabled by Pref_RemoveWindowsOld.
+2025-11-09 22:54:50 - INFO - Prune summary: Unique pruned branches=4
+2025-11-09 22:54:50 - INFO - Pruned sample: C:\Users\pc\AppData\Local\Microsoft\Edge\User Data\Default\Cache
+2025-11-09 22:54:50 - INFO - Pruned sample: C:\Users\pc\AppData\Local\Mozilla\Firefox\Profiles
+2025-11-09 22:54:50 - INFO - Pruned sample: C:\Windows\SoftwareDistribution\Download
+2025-11-09 22:54:50 - INFO - Pruned sample: C:\Users\pc\AppData\Local\Temp
+2025-11-09 22:54:50 - INFO - Final free space: 130.47 GB (133605.57 MB)
+2025-11-09 22:54:50 - INFO - Space recovered: -0 GB (-3.09 MB)
+2025-11-09 22:54:50 - INFO - Note: Event-log exports were performed earlier; skipping redundant export loop in region 8C to avoid duplicate operations.
+2025-11-09 22:54:50 - INFO - Pruned skip-path branch: C:\Windows\Temp

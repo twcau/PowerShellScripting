@@ -1,0 +1,88 @@
+{
+  "Positions": [
+    {
+      "Index": 1,
+      "Serial": "123456ABC",
+      "ConfigItem": "XYZ987654"
+    },
+    {
+      "Index": 2,
+      "Serial": "DEF654321",
+      "ConfigItem": "UVW123789"
+    },
+    {
+      "Index": 3,
+      "Serial": "159753POP",
+      "ConfigItem": "753195TRY"
+    },
+    {
+      "Index": 4,
+      "Serial": "45465777",
+      "ConfigItem": "122456"
+    },
+    {
+      "Index": 5,
+      "Serial": null,
+      "ConfigItem": null
+    },
+    {
+      "Index": 6,
+      "Serial": null,
+      "ConfigItem": null
+    },
+    {
+      "Index": 7,
+      "Serial": null,
+      "ConfigItem": null
+    },
+    {
+      "Index": 8,
+      "Serial": null,
+      "ConfigItem": null
+    },
+    {
+      "Index": 9,
+      "Serial": null,
+      "ConfigItem": null
+    },
+    {
+      "Index": 10,
+      "Serial": null,
+      "ConfigItem": null
+    },
+    {
+      "Index": 11,
+      "Serial": null,
+      "ConfigItem": null
+    },
+    {
+      "Index": 12,
+      "Serial": null,
+      "ConfigItem": null
+    },
+    {
+      "Index": 13,
+      "Serial": null,
+      "ConfigItem": null
+    },
+    {
+      "Index": 14,
+      "Serial": null,
+      "ConfigItem": null
+    },
+    {
+      "Index": 15,
+      "Serial": null,
+      "ConfigItem": null
+    },
+    {
+      "Index": 16,
+      "Serial": null,
+      "ConfigItem": null
+    }
+  ],
+  "Active": true,
+  "SiteCode": "MI",
+  "DeviceType": "Desktop",
+  "Faults": []
+}

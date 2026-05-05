@@ -1,0 +1,69 @@
+root = true
+
+# EditorConfig settings to standardise nullability and diagnostics across the solution
+
+[*.cs]
+# Enforce nullable reference types globally via EditorConfig (complements <Nullable>enable</Nullable>)
+build_property.Nullable = enable
+
+# Baseline severity for analyzers (can be tightened per-rule)
+dotnet_analyzer_diagnostic.severity = warning
+
+# Baseline severities for IDE analyzers (style/readability/design/performance/naming)
+dotnet_analyzer_diagnostic.category-Style.severity = warning
+dotnet_analyzer_diagnostic.category-Readability.severity = warning
+dotnet_analyzer_diagnostic.category-Design.severity = warning
+dotnet_analyzer_diagnostic.category-Performance.severity = warning
+dotnet_analyzer_diagnostic.category-Naming.severity = warning
+
+# Elevate common style rules to warnings (treated as errors via -warnaserror)
+dotnet_diagnostic.IDE0005.severity = warning   # remove unused usings
+dotnet_diagnostic.IDE0011.severity = warning   # add braces
+dotnet_diagnostic.IDE0028.severity = warning   # collection initialisers
+dotnet_diagnostic.IDE0031.severity = warning   # use null-propagation
+dotnet_diagnostic.IDE0046.severity = warning   # convert to conditional
+dotnet_diagnostic.IDE0047.severity = warning   # remove unnecessary parentheses
+dotnet_diagnostic.IDE0058.severity = warning   # unnecessary expression value
+dotnet_diagnostic.IDE0060.severity = warning   # remove unused parameter
+dotnet_diagnostic.IDE0078.severity = warning   # pattern matching
+dotnet_diagnostic.IDE0305.severity = warning   # collection expressions
+dotnet_diagnostic.IDE0370.severity = warning   # nullability suppressions
+
+# Prefer discards for unused parameters to avoid noisy IDE0060 on event handlers
+dotnet_style_unused_parameters = discard:warning
+
+# Treat all core nullability diagnostics as errors
+dotnet_diagnostic.CS8600.severity = error
+dotnet_diagnostic.CS8601.severity = error
+dotnet_diagnostic.CS8602.severity = error
+dotnet_diagnostic.CS8603.severity = error
+dotnet_diagnostic.CS8604.severity = error
+dotnet_diagnostic.CS8605.severity = error
+dotnet_diagnostic.CS8606.severity = error
+dotnet_diagnostic.CS8607.severity = error
+dotnet_diagnostic.CS8608.severity = error
+dotnet_diagnostic.CS8609.severity = error
+
+# Advanced nullability diagnostics
+dotnet_diagnostic.CS8610.severity = error
+dotnet_diagnostic.CS8611.severity = error
+dotnet_diagnostic.CS8612.severity = error
+dotnet_diagnostic.CS8613.severity = error
+dotnet_diagnostic.CS8614.severity = error
+dotnet_diagnostic.CS8615.severity = error
+dotnet_diagnostic.CS8616.severity = error
+dotnet_diagnostic.CS8617.severity = error
+dotnet_diagnostic.CS8618.severity = error
+dotnet_diagnostic.CS8619.severity = error
+
+# Flow and annotation mismatches
+dotnet_diagnostic.CS8620.severity = error
+dotnet_diagnostic.CS8621.severity = error
+dotnet_diagnostic.CS8622.severity = error
+dotnet_diagnostic.CS8623.severity = error
+dotnet_diagnostic.CS8624.severity = error
+dotnet_diagnostic.CS8625.severity = error
+dotnet_diagnostic.CS8626.severity = error
+dotnet_diagnostic.CS8627.severity = error
+dotnet_diagnostic.CS8628.severity = error
+dotnet_diagnostic.CS8629.severity = error

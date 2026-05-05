@@ -1,0 +1,5 @@
+2025-11-09 22:54:50 - INFO - Moved main log to per-run archive: C:\Users\pc\AppData\Local\Temp\ArchivedLogs\Win-Storage-Remediate-20251109_225450.log and recreated main log path: C:\Users\pc\AppData\Local\Temp\Win-Storage-Remediate.log
+2025-11-09 22:54:50 - INFO - Invoking DISM component store cleanup (dry-run: False).
+2025-11-09 22:54:50 - INFO - Checking for pending operations before DISM cleanup.
+2025-11-09 22:54:51 - WARN - Pending reboot detected; skipping DISM cleanup unless -ForceDISMWhenPending parameter or Pref_ForceDISMWhenPendingOverride is set.
+2025-11-09 22:54:51 - INFO - DISM step skipped or dry-run: True

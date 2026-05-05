@@ -1,0 +1,124 @@
+{
+    "Categories": [
+        {
+            "Name": "General",
+            "DefaultSort": 0
+        },
+        {
+            "Name": "AD",
+            "DefaultSort": 0
+        },
+        {
+            "Name": "E365",
+            "DefaultSort": 0
+        },
+        {
+            "Name": "Intune",
+            "DefaultSort": 0
+        }
+    ],
+    "Scripts": [
+        {
+            "DisplayName": "User Creation",
+            "Category": "AD",
+            "FilePath": "",
+            "RequiresAdmin": true
+        },
+        {
+            "DisplayName": "User Departure",
+            "Category": "AD",
+            "FilePath": "",
+            "RequiresAdmin": true
+        },
+        {
+            "DisplayName": "Change of Role",
+            "Category": "AD",
+            "FilePath": "",
+            "RequiresAdmin": true
+        },
+        {
+            "DisplayName": "Returning Hire",
+            "Category": "AD",
+            "FilePath": "",
+            "RequiresAdmin": true
+        },
+        {
+            "DisplayName": "Password Generator",
+            "Category": "General",
+            "FilePath": "",
+            "RequiresAdmin": false
+        },
+        {
+            "DisplayName": "User Creation - External",
+            "Category": "General",
+            "FilePath": "",
+            "RequiresAdmin": true
+        },
+        {
+            "DisplayName": "Sync to Cloud (Delta)",
+            "Category": "AD",
+            "FilePath": "",
+            "RequiresAdmin": true
+        },
+        {
+            "DisplayName": "Lockout & PW Expiry Checker",
+            "Category": "AD",
+            "FilePath": "",
+            "RequiresAdmin": true
+        },
+        {
+            "DisplayName": "Transfer Direct Reports",
+            "Category": "AD",
+            "FilePath": "",
+            "RequiresAdmin": true
+        },
+        {
+            "DisplayName": "Employee Listing (Your HR System to AD)",
+            "Category": "AD",
+            "FilePath": "",
+            "RequiresAdmin": true
+        },
+        {
+            "DisplayName": "Employee Departure Reconcillation (Your HR System to AD)",
+            "Category": "AD",
+            "FilePath": "",
+            "RequiresAdmin": true
+        },
+        {
+            "DisplayName": "Inactive users (90 days) to CSV",
+            "Category": "AD",
+            "FilePath": "",
+            "RequiresAdmin": true
+        },
+        {
+            "DisplayName": "Find OU of a machine",
+            "Category": "AD",
+            "FilePath": "",
+            "RequiresAdmin": true
+        },
+        {
+            "DisplayName": "InTune - Force Sync All Devices (Windows, Android, or iOS)",
+            "Category": "Intune",
+            "FilePath": "",
+            "RequiresAdmin": false
+        },
+        {
+            "DisplayName": "InTune - Show Last Sync Time",
+            "Category": "Intune",
+            "FilePath": "",
+            "RequiresAdmin": false
+        },
+        {
+            "DisplayName": "E365 - Inactive Mailbox",
+            "Category": "E365",
+            "FilePath": "",
+            "RequiresAdmin": false
+        },
+        {
+            "DisplayName": "E365 - Quarantine Data Export",
+            "Category": "E365",
+            "FilePath": "",
+            "RequiresAdmin": false
+        }
+    ]
+}

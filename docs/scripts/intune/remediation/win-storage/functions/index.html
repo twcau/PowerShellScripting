@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="turbo-root" content="/PowerShellScripting">
-    <meta name="turbo-cache-control" content="no-cache" data-turbo-track="reload" data-track-token="3.11.0.815049006535">
+    <meta name="turbo-cache-control" content="no-cache" data-turbo-track="reload" data-track-token="3.11.0.816013946385">
 
     <!-- See retype.com -->
     <meta name="generator" content="Retype 3.11.0">
@@ -12,7 +12,7 @@
     <!-- Primary Meta Tags -->
     <title>Function reference</title>
     <meta name="title" content="Function reference">
-    <meta name="description" content="This page lists helper functions used by Win-Storage-Remediate.ps1 with a short description.">
+    <meta name="description" content="Function list">
 
     <!-- Canonical -->
     <link rel="canonical" href="https://twcau.github.io/PowerShellScripting/scripts/intune/remediation/win-storage/functions/">
@@ -21,22 +21,22 @@
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://twcau.github.io/PowerShellScripting/scripts/intune/remediation/win-storage/functions/">
     <meta property="og:title" content="Function reference">
-    <meta property="og:description" content="This page lists helper functions used by Win-Storage-Remediate.ps1 with a short description.">
+    <meta property="og:description" content="Function list">
 
     <!-- Twitter -->
     <meta property="twitter:card" content="summary_large_image">
     <meta property="twitter:url" content="https://twcau.github.io/PowerShellScripting/scripts/intune/remediation/win-storage/functions/">
     <meta property="twitter:title" content="Function reference">
-    <meta property="twitter:description" content="This page lists helper functions used by Win-Storage-Remediate.ps1 with a short description.">
+    <meta property="twitter:description" content="Function list">
 
     <script data-cfasync="false">(function(){var cl=document.documentElement.classList,ls=localStorage.getItem("retype_scheme"),hd=cl.contains("dark"),hl=cl.contains("light"),wm=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches;if(ls==="dark"||(!ls&&wm&&!hd&&!hl)){cl.remove("light");cl.add("dark")}else if(ls==="light"||(!ls&&!wm&&!hd&&!hl)){cl.remove("dark");cl.add("light")}})();</script>
 
     <link href="../../../../../favicon.ico" rel="icon">
-    <link href="../../../../../resources/css/retype.css?v=3.11.0.815049006535" rel="stylesheet">
+    <link href="../../../../../resources/css/retype.css?v=3.11.0.816013946385" rel="stylesheet">
 
-    <script data-cfasync="false" src="../../../../../resources/js/config.js?v=3.11.0.815049006535" data-turbo-eval="false" defer></script>
+    <script data-cfasync="false" src="../../../../../resources/js/config.js?v=3.11.0.816013946385" data-turbo-eval="false" defer></script>
     <script data-cfasync="false" src="../../../../../resources/js/retype.js?v=3.11.0" data-turbo-eval="false" defer></script>
-    <script id="lunr-js" data-cfasync="false" src="../../../../../resources/js/lunr.js?v=3.11.0.815049006535" data-turbo-eval="false" defer></script>
+    <script id="lunr-js" data-cfasync="false" src="../../../../../resources/js/lunr.js?v=3.11.0.816013946385" data-turbo-eval="false" defer></script>
 </head>
 <body>
     <div id="retype-app" class="relative text-base antialiased text-base-text bg-base-bg font-body">
@@ -228,7 +228,31 @@
         <span>Function reference</span>
     </h1>
 </doc-anchor-target>
+<!-- omit from toc -->
+<doc-anchor-target id="on-this-page">
+    <h2>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#on-this-page">#</doc-anchor-trigger>
+        <span>On this page</span>
+    </h2>
+</doc-anchor-target>
+<ul>
+<li><doc-anchor-trigger to="#function-list">Function list</doc-anchor-trigger></li>
+<li><doc-anchor-trigger to="#function-reference-selected-helpers">Function reference (selected helpers)</doc-anchor-trigger>
+<ul>
+<li><doc-anchor-trigger to="#write-custommessage">Write-CustomMessage</doc-anchor-trigger></li>
+<li><doc-anchor-trigger to="#get-recyclebinsize">Get-RecycleBinSize</doc-anchor-trigger></li>
+<li><doc-anchor-trigger to="#invoke-dism-safe">Invoke-DISM-Safe</doc-anchor-trigger></li>
+<li><doc-anchor-trigger to="#invoke-removewithretry">Invoke-RemoveWithRetry</doc-anchor-trigger></li>
+</ul>
+</li>
+</ul>
 <p>This page lists helper functions used by <code v-pre>Win-Storage-Remediate.ps1</code> with a short description. Use these helpers when writing tests or adapting the script.</p>
+<doc-anchor-target id="function-list">
+    <h2>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#function-list">#</doc-anchor-trigger>
+        <span>Function list</span>
+    </h2>
+</doc-anchor-target>
 <div class="table-wrapper scrollbar overflow-hidden">
 <table class="comfortable">
 <thead>
@@ -349,6 +373,113 @@
 </tbody>
 </table>
 </div>
+<doc-anchor-target id="function-reference-selected-helpers">
+    <h2>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#function-reference-selected-helpers">#</doc-anchor-trigger>
+        <span>Function reference (selected helpers)</span>
+    </h2>
+</doc-anchor-target>
+<doc-anchor-target id="write-custommessage">
+    <h3>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#write-custommessage">#</doc-anchor-trigger>
+        <span>Write-CustomMessage</span>
+    </h3>
+</doc-anchor-target>
+<ul>
+<li>Signature: <code v-pre>Write-CustomMessage -Message &lt;string&gt; [-Level &lt;string&gt;] [-Verbose]</code></li>
+<li>Purpose: Centralised log-first writer used throughout the remediation script.</li>
+<li>Parameters:
+<ul>
+<li>Message: The textual message to record.</li>
+<li>Level: Optional severity string (for example, &#x27;INFO&#x27;, &#x27;WARN&#x27;, &#x27;ERROR&#x27;). Defaults to &#x27;INFO&#x27; when omitted.</li>
+<li>Verbose: When supplied (or when the run is started with <code v-pre>-Verbosity Verbose</code>), the function emits <code v-pre>Write-Verbose</code> output in addition to appending to the temp log.</li>
+</ul>
+</li>
+<li>Behaviour:
+<ul>
+<li>Always appends a timestamped, single-line entry to the per-run temporary log file (located in <code v-pre>%TEMP%</code>).</li>
+<li>Emits host verbose output only when verbosity is enabled; this keeps Intune-captured host output compact while preserving detailed diagnostics in the temp log.</li>
+<li>Sanitises input to avoid logging PII in host output; full details remain in the temp log only.</li>
+</ul>
+</li>
+<li>Return: None (writes to log and optionally to the host verbose stream).</li>
+</ul>
+<doc-anchor-target id="get-recyclebinsize">
+    <h3>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#get-recyclebinsize">#</doc-anchor-trigger>
+        <span>Get-RecycleBinSize</span>
+    </h3>
+</doc-anchor-target>
+<ul>
+<li>Signature: <code v-pre>Get-RecycleBinSize [-Path &lt;string&gt;] [-AsInt64]</code></li>
+<li>Purpose: Best-effort estimation of Recycle Bin usage for the specified volume or the system volume.</li>
+<li>Parameters:
+<ul>
+<li>Path: Optional path or drive spec used to scope the probe. If omitted the function probes the system (C:) bin.</li>
+<li>AsInt64: When present the function returns a stable <code v-pre>[int64]</code> value.</li>
+</ul>
+</li>
+<li>Behaviour:
+<ul>
+<li>Attempts a Shell.Application COM query first (the most accurate when available).</li>
+<li>If COM is unavailable or fails, falls back to a conservative per-user <code v-pre>Recycle.Bin</code> enumeration and normalises the result to an <code v-pre>[int64]</code> number of bytes.</li>
+<li>May return <code v-pre>0</code> when the bin cannot be probed due to access restrictions (for example running under different accounts or as SYSTEM in some hosts).</li>
+</ul>
+</li>
+<li>Return: <code v-pre>[int64]</code> number of bytes (0 when unknown or inaccessible).</li>
+</ul>
+<doc-anchor-target id="invoke-dism-safe">
+    <h3>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#invoke-dism-safe">#</doc-anchor-trigger>
+        <span>Invoke-DISM-Safe</span>
+    </h3>
+</doc-anchor-target>
+<ul>
+<li>Signature: <code v-pre>Invoke-DISM-Safe [-WhatIf] [-ForceDISMWhenPending] [-TimeoutSec &lt;int&gt;]</code></li>
+<li>Purpose: Run DISM component store cleanup while respecting pending-reboot detection and <code v-pre>ShouldProcess</code> semantics.</li>
+<li>Parameters:
+<ul>
+<li>WhatIf: Honour <code v-pre>ShouldProcess</code> dry-run semantics (the function supports <code v-pre>-WhatIf</code>/<code v-pre>-Confirm</code>).</li>
+<li>ForceDISMWhenPending: Overrides pending-reboot gating and forces DISM to run even when a reboot is pending.</li>
+<li>TimeoutSec: Optional timeout (seconds) for the DISM call.</li>
+</ul>
+</li>
+<li>Behaviour:
+<ul>
+<li>Detects common pending-reboot markers and will skip DISM unless <code v-pre>ForceDISMWhenPending</code> is supplied or the file-level preference <code v-pre>$Pref_ForceDISMWhenPendingOverride</code> is set.</li>
+<li>Calls <code v-pre>Wait-ForDISM</code> to ensure no concurrent <code v-pre>dism.exe</code> processes are running (with retries/backoff).</li>
+<li>Logs exit codes, duration, and relevant diagnostics to the per-run temp log.</li>
+<li>Declared with <code v-pre>SupportsShouldProcess</code> so callers can use <code v-pre>-WhatIf</code> safely in tests.</li>
+</ul>
+</li>
+<li>Return: <code v-pre>[int]</code> DISM exit code (0 for success). See logs for details on non-zero values.</li>
+</ul>
+<doc-anchor-target id="invoke-removewithretry">
+    <h3>
+        <doc-anchor-trigger class="header-anchor-trigger" to="#invoke-removewithretry">#</doc-anchor-trigger>
+        <span>Invoke-RemoveWithRetry</span>
+    </h3>
+</doc-anchor-target>
+<ul>
+<li>Signature: <code v-pre>Invoke-RemoveWithRetry -Path &lt;string&gt; [-Retries &lt;int&gt;] [-BackoffMs &lt;int&gt;] [-DryRun]</code></li>
+<li>Purpose: Safe removal helper that canonicalises paths, checks skip/protected patterns, and retries common transient failure modes.</li>
+<li>Parameters:
+<ul>
+<li>Path: Full path to remove (file or directory). The helper performs canonicalisation and protection checks.</li>
+<li>Retries: Number of retry attempts (default: 3).</li>
+<li>BackoffMs: Milliseconds to wait between retries (default: 500).</li>
+<li>DryRun: When supplied, the helper logs what it would remove without performing destructive actions.</li>
+</ul>
+</li>
+<li>Behaviour:
+<ul>
+<li>Verifies that the target path is not a protected or skip-path using <code v-pre>Test-IsProtectedPath</code>/<code v-pre>Test-IsSkipPath</code>.</li>
+<li>Attempts removal with <code v-pre>Remove-Item -Force -Recurse</code> (when safe) and retries on transient errors such as sharing violations.</li>
+<li>Writes per-attempt diagnostics to the per-run temp log; only concise summaries are emitted to the host.</li>
+</ul>
+</li>
+<li>Return: <code v-pre>[bool]</code> true on successful removal or when <code v-pre>DryRun</code> is set; false on permanent failure (details in the per-run temp log).</li>
+</ul>
 
                                 
                                 <!-- Required only on API pages -->
