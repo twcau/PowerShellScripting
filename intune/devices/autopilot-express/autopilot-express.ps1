@@ -72,6 +72,8 @@ param(
     [ValidateSet('Inspect', 'Recover')][string]$SessionLockAction,
     [string]$SessionLockPath,
     [switch]$ConfirmStopped,
+    [ValidateSet('Inspect', 'Resolve')][string]$CheckpointAction,
+    [string]$CheckpointPath,
     [Nullable[bool]]$BirthCertificateEnabled,
     [Nullable[bool]]$ChecklistEnabled,
     [Nullable[bool]]$EnforceDocumentGuards,
@@ -260,7 +262,7 @@ function Complete-AutopilotDiagnostics {
 }
 
 $Script:DiagnosticLogPath = Start-AutopilotDiagnostics
-if ($MigrateWorkflowIds -or $SessionLockAction) { $Mode = 'Demo' }
+if ($MigrateWorkflowIds -or $SessionLockAction -or $CheckpointAction) { $Mode = 'Demo' }
 Show-ScriptScreen -Title 'Initial setup and testing' -ModeLabel 'Choose mode' -PromptFollows
 try {
     $runtimeConfigFileName = 'autopilot-express.runtime.json'
@@ -372,7 +374,10 @@ function Write-AutopilotExpressLog {
         [ValidateSet('INFO', 'WARN', 'ERROR', 'DEBUG')][string]$Level = 'INFO'
     )
     $ts = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-    Write-Information -MessageData ('[{0}] [{1}] {2}' -f $ts, $Level, $Message) -InformationAction Continue
+    # A lost console (for example a terminal closed by endpoint protection) must not abort a save
+    # half-way and strand a checkpoint, so console write failures are tolerated here.
+    try { Write-Information -MessageData ('[{0}] [{1}] {2}' -f $ts, $Level, $Message) -InformationAction Continue }
+    catch [System.IO.IOException] { $null = $_ }
 }
 
 # INTERNAL DEFAULTS & NOMENCLATURE (workflow availability comes from the manifest)
@@ -1814,6 +1819,8 @@ function Write-Utf8File {
         [Parameter(Mandatory)][AllowEmptyString()][string]$Content,
         [string]$PreviousPath
     )
+    # File cmdlets must never touch the console mid-save; a lost console would otherwise strand the marker.
+    $ProgressPreference = 'SilentlyContinue'
     New-ParentDirectory -Path $Path
     $pendingPath = '{0}.pending' -f $Path
     $previousPath = if ($PreviousPath) { $PreviousPath } else { '{0}.previous' -f $Path }
@@ -2908,10 +2915,145 @@ function Assert-LocalCheckpointState {
     #>
     param([ValidateNotNullOrEmpty()][string]$BasePath)
     $path = if ($PSBoundParameters.ContainsKey('BasePath')) { Get-LocalCheckpointPath -BasePath $BasePath } else { Get-LocalCheckpointPath }
-    Assert-FileWriteRecoveryState -Path $path
+    # Both messages name the guided recovery command so a stranded save never needs manual file surgery.
+    $guidance = 'Check it without signing in: .\autopilot-express.ps1 -CheckpointAction Inspect -CheckpointPath ''{0}''. After every session using this store has stopped, resolve it with -CheckpointAction Resolve -CheckpointPath ''{0}'' -ConfirmStopped (a verified backup is taken first).' -f $path
+    try { Assert-FileWriteRecoveryState -Path $path }
+    catch { throw ('{0} {1}' -f $_.Exception.Message, $guidance) }
     if (Test-Path -LiteralPath $path) {
-        throw ('Unresolved local checkpoint at {0}. Preserve all evidence and inspect local and tenant state before resuming; no automatic replay or rollback is permitted.' -f $path)
+        throw ('Unresolved local checkpoint at {0}. Preserve all evidence and inspect local and tenant state before resuming; no automatic replay or rollback is permitted. {1}' -f $path, $guidance)
     }
+}
+
+function Invoke-LocalCheckpointRecovery {
+    <#
+    .SYNOPSIS
+        Inspect, or explicitly resolve, a save checkpoint left behind by a crash.
+    .DESCRIPTION
+        A device-records save first writes a checkpoint holding the full proposed records,
+        audit and bench content, then writes each real file, then deletes the checkpoint.
+        If the process is killed part-way, the checkpoint stays and startup is refused.
+
+        This function compares each real file with the checkpoint's proposal:
+          - Not saved: the file still holds the previous good save.
+          - Saved:     the file already matches the proposal.
+        Resolve then takes a verified, hashed backup of the whole data folder and:
+          - All not saved (or the checkpoint itself was never finished): discards the
+            unfinished proposal; the previous good save stays in place.
+          - All saved: removes the leftover checkpoint only.
+          - Mixed: finishes writing the remaining files from the proposal, so all three
+            files agree again, then removes the checkpoint.
+        Local files only. No tenant action is replayed and no Graph sign-in occurs.
+        Interrupted writes on the real files, an active session owner, or a damaged
+        checkpoint are refused for manual review.
+    .PARAMETER Path
+        Exact autopilot-express-<live|demo>-<user>.checkpoint.json path from the startup error.
+    .PARAMETER Resolve
+        Apply the resolution described above. Without it, the function is read-only.
+    .PARAMETER ConfirmStopped
+        Operator confirmation that every session using this store has stopped.
+    .OUTPUTS
+        Summary object: state, per-file result, backup location and outcome.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$Path,
+        [switch]$Resolve,
+        [switch]$ConfirmStopped
+    )
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    $leaf = Split-Path -Leaf $fullPath
+    if ($leaf -notmatch '^autopilot-express-(live|demo)-(.+)\.checkpoint\.json$') { throw 'Select the exact autopilot-express-<live|demo>-<user>.checkpoint.json path shown in the startup error.' }
+    $modeName = $Matches[1]
+    if ($Matches[2] -ine $env:USERNAME) { throw ('This checkpoint belongs to {0}. Resolve it while signed in to Windows as that user; nothing was changed.' -f $Matches[2]) }
+    $dataPath = Split-Path -Parent $fullPath
+    $artefacts = @('', '.pending', '.previous', '.write-in-progress' | ForEach-Object { '{0}{1}' -f $fullPath, $_ } | Where-Object { Test-Path -LiteralPath $_ })
+    if (-not $artefacts.Count) { throw ('No checkpoint or checkpoint artefact exists at {0}; nothing needs resolving.' -f $fullPath) }
+
+    $previousDemoMode = $Script:Runtime.IsDemoMode
+    $Script:Runtime.IsDemoMode = $modeName -eq 'demo'
+    try {
+        # Refuse while the session that owns this store may still be running.
+        $lockPath = Join-Path $dataPath ('autopilot-express-{0}.session.lock' -f $modeName)
+        if (Test-Path -LiteralPath $lockPath) {
+            $lockState = Invoke-LocalSessionLockRecovery -Path $lockPath
+            if (-not $lockState.CanRecover) { throw ('The session lock shows a running or unverified owner ({0}). Close every Autopilot Express window and try again; nothing was changed.' -f $lockState.State) }
+        }
+
+        # Resolve the real files exactly as the save wrote them (indexed session names first).
+        $index = Get-SessionFileIndex -DataPath $dataPath
+        $deviceFile = if ($index) { $index.DeviceFile } else { '{0}-{1}.json' -f (Get-ModeUserDataFilePrefix), $env:USERNAME }
+        $benchFile = if ($index) { $index.BenchFile } else { '{0}-{1}.json' -f (Get-ModeBuildBenchFilePrefix), $env:USERNAME }
+        $targets = [ordered]@{ Records = Join-Path $dataPath $deviceFile; Bench = Join-Path $dataPath $benchFile }
+        if ($modeName -eq 'live') { $targets.Audit = Join-Path $dataPath $Script:Config.MasterAuditFileName }
+        foreach ($name in $targets.Keys) {
+            try { Assert-FileWriteRecoveryState -Path $targets[$name] }
+            catch { throw ('The {0} file also has an interrupted save, so this needs manual review. Nothing was changed. Detail: {1}' -f $name, $_.Exception.Message) }
+        }
+
+        # A checkpoint that was never fully written means no real file was touched yet.
+        $checkpointComplete = (Test-Path -LiteralPath $fullPath) -and -not (Test-Path -LiteralPath ('{0}.pending' -f $fullPath))
+        $proposal = $null
+        if ($checkpointComplete) {
+            try {
+                $proposal = Get-Content -LiteralPath $fullPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                $rootMatches = [string]::Equals([IO.Path]::GetFullPath([string]$proposal.Root).TrimEnd('\'), $dataPath.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
+                if ($proposal.SchemaVersion -ne 1 -or -not $rootMatches -or $proposal.User -ine $env:USERNAME -or $proposal.Mode -cne $modeName -or
+                    [string]::IsNullOrWhiteSpace([string]$proposal.Token) -or $proposal.RecordsJson -isnot [string] -or
+                    ($null -ne $proposal.AuditJson -and $proposal.AuditJson -isnot [string]) -or ($null -ne $proposal.BenchJson -and $proposal.BenchJson -isnot [string])) { throw 'metadata does not match this store' }
+                foreach ($content in @($proposal.RecordsJson, $proposal.AuditJson, $proposal.BenchJson)) { if ($null -ne $content) { $null = $content | ConvertFrom-Json -ErrorAction Stop } }
+            }
+            catch { throw ('The checkpoint is damaged ({0}), so it cannot be compared safely. Nothing was changed; keep the file for review.' -f $_.Exception.Message) }
+        }
+
+        $results = [ordered]@{}
+        if ($proposal) {
+            $proposed = @{ Records = $proposal.RecordsJson; Bench = $proposal.BenchJson; Audit = $proposal.AuditJson }
+            foreach ($name in $targets.Keys) {
+                if ($null -eq $proposed[$name]) { continue }
+                $current = if (Test-Path -LiteralPath $targets[$name]) { [string](Get-Content -LiteralPath $targets[$name] -Raw -ErrorAction Stop) } else { $null }
+                $results[$name] = if ($current -ceq $proposed[$name]) { 'Saved' } else { 'Not saved' }
+            }
+        }
+        $savedCount = @($results.Values | Where-Object { $_ -eq 'Saved' }).Count
+        $state = if (-not $proposal) { 'CheckpointUnfinished' } elseif ($savedCount -eq 0) { 'NothingSaved' } elseif ($savedCount -eq $results.Count) { 'AllSaved' } else { 'PartlySaved' }
+        $plan = @{
+            CheckpointUnfinished = 'The crash happened while the checkpoint itself was being written, so no device file was touched. Resolve keeps the previous good save and removes the unfinished checkpoint.'
+            NothingSaved         = 'No device file was changed. Resolve keeps the previous good save and discards the unfinished proposal; any lost step is simply redone next time.'
+            AllSaved             = 'Every device file already holds the new save. Resolve only removes the leftover checkpoint.'
+            PartlySaved          = 'Some files hold the new save and some do not. Resolve finishes writing the remaining files from the checkpoint so all files agree, then removes it.'
+        }[$state]
+        $summary = [pscustomobject]@{
+            CheckpointPath = $fullPath
+            State          = $state
+            Files          = @($results.Keys | ForEach-Object { '{0}: {1}' -f $_, $results[$_] })
+            ResolveWill    = $plan
+            BackupPath     = $null
+            Outcome        = 'Inspected only; nothing was changed.'
+        }
+        if (-not $Resolve) { return $summary }
+        if (-not $ConfirmStopped) { throw 'Resolve requires -ConfirmStopped after every session using this store has stopped. Nothing was changed.' }
+        if (-not $PSCmdlet.ShouldProcess($fullPath, 'Back up the data folder and resolve the leftover checkpoint')) { return $summary }
+
+        $snapshot = New-LocalSessionRecoverySnapshot -DataPath $dataPath -Mode $(if ($modeName -eq 'demo') { 'Demo' } else { 'Live' }) -Confirm:$false
+        $summary.BackupPath = $snapshot.Path
+        if ($state -eq 'PartlySaved') {
+            foreach ($name in @($results.Keys | Where-Object { $results[$_] -eq 'Not saved' })) {
+                Write-Utf8File -Path $targets[$name] -Content $proposed[$name]
+                Write-AutopilotExpressLog -Message ('Checkpoint recovery finished saving the {0} file from the checkpoint proposal.' -f $name) -Level 'WARN'
+            }
+        }
+        # Remove only checkpoint artefacts that are byte-identical to the verified backup.
+        foreach ($artefact in $artefacts) {
+            $backup = @($snapshot.Inventory | Where-Object { $_.SourcePath -eq $artefact })
+            if ($backup.Count -ne 1 -or (Get-FileHash -LiteralPath $artefact -Algorithm SHA256 -ErrorAction Stop).Hash -cne $backup[0].SHA256) { throw ('Checkpoint evidence changed during recovery: {0}. Backup retained at {1}; nothing else was removed.' -f $artefact, $snapshot.Path) }
+            Remove-Item -LiteralPath $artefact -ErrorAction Stop
+        }
+        $summary.Outcome = 'Resolved. Start Autopilot Express normally; if it reports a session lock, choose [C] to back it up and recover.'
+        Write-AutopilotExpressLog -Message ('Checkpoint recovery resolved {0} as {1}; verified backup at {2}.' -f $fullPath, $state, $snapshot.Path) -Level 'WARN'
+        return $summary
+    }
+    finally { $Script:Runtime.IsDemoMode = $previousDemoMode }
 }
 
 function Get-LocalCheckpointInspection {
@@ -3213,7 +3355,9 @@ function Write-UserDeviceRecords {
     }
     finally {
         if ($null -ne $checkpointToken) { $Script:LocalCheckpointToken = $null }
-        Write-Verbose ('Checkpoint save: succeeded={0}; elapsed-ms={1:N2}.' -f $saveSucceeded, $saveTimer.Elapsed.TotalMilliseconds)
+        # A lost console must not replace the save's own outcome.
+        try { Write-Verbose ('Checkpoint save: succeeded={0}; elapsed-ms={1:N2}.' -f $saveSucceeded, $saveTimer.Elapsed.TotalMilliseconds) }
+        catch [System.IO.IOException] { $null = $_ }
     }
 }
 
@@ -3690,6 +3834,8 @@ function Show-SessionInformation {
                 SessionLockAction      = '-SessionLockAction <Inspect|Recover>: inspect or explicitly recover a stopped local reservation.'
                 SessionLockPath        = '-SessionLockPath <path>: reservation path for the selected inspection/recovery action.'
                 ConfirmStopped         = '-ConfirmStopped: explicit stopped-session acknowledgement; never bypasses ownership or storage guards.'
+                CheckpointAction       = '-CheckpointAction <Inspect|Resolve>: check, or back up and resolve, a save checkpoint left by a crash; no sign-in.'
+                CheckpointPath         = '-CheckpointPath <path>: checkpoint file named in the startup error.'
             }
             $lines = @('Example: .\autopilot-express.ps1 -Mode Demo', '')
             foreach ($name in $Script:EntryPointParameterNames) {
@@ -14070,6 +14216,10 @@ function Show-ReturnToMainMenu {
 try {
     if ($SessionLockAction) {
         Invoke-LocalSessionLockRecovery -Path $SessionLockPath -Recover:($SessionLockAction -eq 'Recover') -ConfirmStopped:$ConfirmStopped
+        return
+    }
+    if ($CheckpointAction) {
+        Invoke-LocalCheckpointRecovery -Path $CheckpointPath -Resolve:($CheckpointAction -eq 'Resolve') -ConfirmStopped:$ConfirmStopped -Confirm:$false | Format-List
         return
     }
     Initialize-AutopilotExpressDefinitions

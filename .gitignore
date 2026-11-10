@@ -12,7 +12,15 @@ tools/
 
 # Autopilot Express operational records and recovery artefacts
 intune/devices/autopilot-express/data/
+intune/devices/autopilot-express/data/**
+intune/devices/autopilot-express/development/
+intune/devices/autopilot-express/development/**
+intune/devices/autopilot-express/errors/
+intune/devices/autopilot-express/errors/**
+intune/devices/autopilot-express/templates/
+intune/devices/autopilot-express/templates/**
 intune/devices/autopilot-express/hashes/
+intune/devices/autopilot-express/hashes/**
 
 # Autopilot Express generated support bundles can contain operational identities
 intune/devices/autopilot-express/*.zip
