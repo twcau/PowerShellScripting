@@ -1,3 +1,11 @@
+# HISTORICAL REFERENCE ONLY - NOT AN OPERATOR ENTRY POINT (2026-10-07)
+# Run autopilot-express.ps1 and follow README.md for the current workflow.
+# The draft below is preserved for traceability, not current requirements.
+# Its manager-chain checks, permissions, endpoints and stub menus are obsolete.
+# Final ownership is explicitly selected by the technician from active C/E accounts;
+# no manager-chain or role inference is performed by the current implementation.
+# Live approval and a real-device pilot remain required before bulk imaging.
+#
 # <!-- omit from toc -->
 # .SYNOPSIS
 #    Command line framework for streamlining Intune Autopilot device preparation and tracking.

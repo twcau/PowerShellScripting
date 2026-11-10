@@ -44,7 +44,7 @@ namespace ScriptLauncher {
         /// </summary>
         [System.STAThreadAttribute()]
         [System.Diagnostics.DebuggerNonUserCodeAttribute()]
-        [System.CodeDom.Compiler.GeneratedCodeAttribute("PresentationBuildTasks", "10.0.7.0")]
+        [System.CodeDom.Compiler.GeneratedCodeAttribute("PresentationBuildTasks", "10.0.11.0")]
         public static void Main() {
             ScriptLauncher.App app = new ScriptLauncher.App();
             app.Run();

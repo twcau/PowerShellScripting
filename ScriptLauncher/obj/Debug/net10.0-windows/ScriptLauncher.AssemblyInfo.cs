@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("ScriptLauncher")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+70ca5eddb24ec6ab5ffff86afa0125eeec642728")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+28f39fedaf654d96b2038c623e1c8e00d514efb2")]
 [assembly: System.Reflection.AssemblyProductAttribute("ScriptLauncher")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ScriptLauncher")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

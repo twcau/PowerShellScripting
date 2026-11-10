@@ -1,5 +1,4 @@
 <!-- omit from toc -->
-
 # PowerShellScripting
 
 A collection of PowerShell scripts for enterprise IT administration, covering Active Directory, Microsoft 365, Exchange Online, Entra ID, and Intune management tasks that i've created over the years.
@@ -139,33 +138,68 @@ Many scripts include GUI interfaces for ease of use:
 
 The technician-friendly, menu-driven CLI for rapid Autopilot preparation and tracking lives here:
 
-- Path: `intune/devices/autopilot-express/autopilot-express.ps1`
-- Manifest: `intune/devices/autopilot-express/autopilot-express.manifest.json`
-- Runtime settings: `intune/devices/autopilot-express/autopilot-express.runtime.json`
+- [Entry point](intune/devices/autopilot-express/autopilot-express.ps1)
+- [Workflow manifest](intune/devices/autopilot-express/autopilot-express.manifest.json)
+- [Runtime settings](intune/devices/autopilot-express/autopilot-express.runtime.json)
+- [Operator guide](intune/devices/autopilot-express/README.md), [operations reference](intune/devices/autopilot-express/OPERATIONS.md), [testing and acceptance](intune/devices/autopilot-express/TESTING.md) and [development status](intune/devices/autopilot-express/DEVELOPMENT.md)
+
+**Live can delete managed-device records and change membership and primary users. This is a development
+implementation, not production-approved.** Start with Demo. Live authentication/read inspection, mutations and
+physical work each require the documented approvals. Keep storage Local; Shared is disabled. The governing
+checklist is [bundled in development](intune/devices/autopilot-express/development/Autopilot%20Checklist%20-%20v1.4.pdf).
+Confirm that this v1.4 copy is the current approved procedure before physical work.
+
+The 14 October 2026 version 0.3.1 Test release adds shared new/existing induction, active-bench or standalone
+placement, proven dispatch-day statistics with elapsed-time aggregates, aligned bench commands and paged About/help.
+The current offline implementation also includes canonical step IDs with guarded evidence conversion, stable indexed
+session filenames, prompt spacing and captured-feedback identity deduplication. Crash-lock inspection/recovery now
+preserves original evidence; per-run diagnostic logs start automatically. Autopilot discovery uses a serial filter,
+SDK transport configuration is reused, and accepted Group Tag updates remain pending after unavailable read-back.
+See the linked development/testing guides for actual fresh gate results, migration status and separate tenant acceptance.
+
+The 15 October operational repairs add DeviceCode as the configured default, session-only `-AuthMode` overrides and
+explicit reconnect after authentication failure. The target is now `Intune-Autopilot-Testing`, with default-No
+prefix-conflict correction. U withdraws eligible physical confirmations without deleting history or reversing Graph
+actions; L opens full details behind compact bench summaries. Account selection now uses directory Windows username
+first. The [incident analysis](intune/devices/autopilot-express/OPERATIONS.md#15-october-operational-incident)
+distinguishes confirmed code defects from the unresolved native in-page I/O crash and tenant acceptance.
+
+The follow-up makes Show Steps List manifest-driven with separated normal/recovery headings, blank step separators
+and height-aware paging. Existing serials offer Cancel-default Resume/Restore/Restart, retaining attempts and prior
+build snapshots; restart is a new cycle, not cloud rollback. The operations reference now includes a practical
+[native crash diagnosis procedure](intune/devices/autopilot-express/OPERATIONS.md#native-crash-diagnosis-procedure)
+and [local-data integrity guidance](intune/devices/autopilot-express/OPERATIONS.md#data-integrity-and-authorised-corrections).
+Editable local statistics are not independently authenticated compliance evidence.
+
+Offline maintenance now has a [repeatable validation runner](intune/devices/autopilot-express/development/Invoke-OfflineValidation.ps1)
+and a separate two-host Windows CI workflow. The runner requires approved pinned tools, rejects incomplete/skipped/
+failed discovery and retains source provenance/reports outside the repository. Operational resume is operator-confirmed;
+workspace migration remains guarded and tenant/physical acceptance stays paused. Recorded security findings still
+require owner action; offline passes are not a security clearance or deployment approval.
 
 How to run:
 
 1. Open PowerShell 7 in the repository root.
-2. Run live mode with `intune/devices/autopilot-express/autopilot-express.ps1 -Mode Live`.
-3. Run demonstration mode with `intune/devices/autopilot-express/autopilot-express.ps1 -Mode Demo`.
+2. Rehearse with `./intune/devices/autopilot-express/autopilot-express.ps1 -Mode Demo`.
+3. Only after separate approval, use `./intune/devices/autopilot-express/autopilot-express.ps1 -Mode Live`.
 4. Select your current site when prompted (default is shown). The site code is used to enforce the Group Tag format.
 5. Use the on-screen menu to perform common tasks.
 
 Current workflow coverage:
 
-- 1. Start work on a new device (capture Serial/CI, confirm Site, select Device Type, enforce Group Tag e.g., `MI-Desktop`)
-- 1. Run the manifest-driven Autopilot sequence (steps A-J cover Autopilot lookup, Intune cleanup, Group Tag application, deployment-profile confirmation, pre-provisioning group add/remove, userless-enrolment unblock, technician primary user, app retry, and final primary user assignment)
-- 1. Show outstanding work (devices with incomplete steps)
-- 1. Maintain device records
-- 1. Stats and summaries
-- 1. Enhancements (feature ideas; manifest-driven)
-- 1. Change site
-- 1. Build bench (positions grid with session persistence)
+- Capture serial/CI, site and device type; enforce the Group Tag, for example `MI-Desktop`.
+- Display A-O for normal work and P-Q for conditional recovery; saved step IDs/history remain unchanged.
+- Resolve identity, prepare Intune, guide physical milestones, assign a confirmed regular technician and final owner.
+- Request sync and record application observations; sync is not the named portal application-remediation procedure.
+- Use one executable workflow from bench V or main option 3; direct bench P:/CI:/S: selectors open without executing work.
+- Use T preparation, X recovery, guarded normal dispatch and reasoned DO administrative closure without fabricated verification.
+- Inspect outstanding work, maintain records, view statistics, change site and review enhancement proposals.
+- Manage a persistent positions grid with five compact contextual event rows, newest first, and separate full details.
 
 Mode behaviour:
 
-- `Live` mode uses browser-based Microsoft Graph sign-in only and validates the runtime JSON before continuing.
-- `Demo` mode simulates browser sign-in plus every manifest and Graph-backed action, while still persisting progress, recent-user choices, and resume state.
+- `Live` defaults to device-code Microsoft Graph sign-in; Browser remains an explicit preference/session override. Runtime JSON is validated before continuing.
+- `Demo` mode simulates authentication and workflow actions without browser sign-in or tenant requests, while persisting separate progress, recent-user choices and resume state. Outcomes are Simulated, not Live verification.
 - Live and demo sessions are isolated from each other and prompt to resume or archive-and-start-clean when prior state exists.
 
 Build bench quick reference:
@@ -173,21 +207,33 @@ Build bench quick reference:
 - Displays a grid of positions sized to your window, with centred position numbers and truncated values for readability.
 - `I` = Induct new device
 - `S` = Start next step for a device
-- `V` = View all actions for a device
-- `D` = Dispatch and finish a device
+- `T` = Prepare one device with per-action save/stop gates
+- `V` = Open the shared executable device workflow
+- `D` = Dispatch after readiness and default-No confirmation; tracked workflow uses `DISPATCH`
+- `DO` = Administrative completion with written reason and default-No approval; unresolved evidence remains
+- `X` = Start/resume guided recovery
 - `R` = Remove from position
 - `M` = Move device between positions
-- `E` = Exit build bench view
+- `W` = Read the paged workflow guide without executing actions
+- `0`/`E` = Return to main; Enter refreshes, not exits
+
+C remains an undisplayed compatibility command. Plain D in a device workflow selects its step, not dispatch.
+See the operator guide for display-to-saved ID mapping and unlabelled saved-ID diagnostic messages.
 
 Data and persistence:
 
-- Session JSON is written to `data/` when the repository path is writable.
+- Session JSON is written to `data/` under the resolved definition/project root when writable (beside the script/JSON definitions in this layout, not necessarily repository-root data).
 - If the repository path is read-only or behaves like a synced/reparse-point path that rejects new files, the script automatically falls back to `%LOCALAPPDATA%\PowerShellScriptingNew\AutopilotExpress\data`.
 - Separate per-user files are maintained for live and demo device records, recent users, and build-bench state.
-- Clean restarts archive the previous session automatically.
+- Startup Resume defaults to Y. N immediately archives the current user's current-mode device/bench pair, without another No/CLEAR prompt. Main option 10 instead requires selection, default-No approval and CLEAR; cancellation preserves active work. Neither path changes tenant state or deletes audit, receipts or import journals.
 - Live mode also maintains `autopilot-master-audit.json` for manager review of technician actions and resulting device/user outcomes.
 - Group Tag is enforced as `SITECODE-DeviceType` (no override) for consistency and policy compliance.
 - Required Graph scopes, modules, and tenant-specific values are externalised in the runtime JSON rather than hard-coded in the script body.
+
+Workflow completion, dispatch and physical certification are distinct. Satisfying required steps can automatically
+mark the record completed before dispatch; it leaves active pickers but its bench slot remains until dispatch/removal.
+The local audit is not cross-machine search, and checkpointed multi-file saves are not guaranteed atomic or power-loss
+durable. Tenant/terminal/physical acceptance remains outstanding; offline tests do not authorise Live use.
 
 ## Configuration
 
@@ -324,6 +370,8 @@ All scripts follow consistent logging practices:
 - **Authentication Failures**: Verify credentials and MFA settings
 - **Permission Errors**: Check administrative rights for target systems
 - **Network Connectivity**: Ensure access to required cloud services
+- **Desktop Shortcut Startup**: Launch `e365/quarantine-to-block.ps1` shortcuts with PowerShell 7, for example `pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\Path\To\PowerShellScriptingNew\e365\quarantine-to-block.ps1"`. Starting it with `powershell.exe` opens Windows PowerShell 5.1 and shows the Windows PowerShell banner before the script can control output.
+- **Quarantine-to-Block Authentication Startup**: The script checks that `login.microsoftonline.com` resolves before starting Exchange Online authentication. If DNS, VPN, proxy, or network connectivity is unavailable, the script skips that auth attempt with a concise warning instead of triggering repeated MSAL token stack traces.
 - **Quarantine-to-Block DNSBL Skips**: DNSBL reporting is explicit opt-in. The script skips DNSBL submission unless `-ReportToDnsbl` is supplied, or defaults mode is explicitly requested with DNSBL enabled in the saved preferences.
 
 ### Support Resources

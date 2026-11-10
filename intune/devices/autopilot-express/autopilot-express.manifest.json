@@ -1,12 +1,86 @@
 {
-  "manifestVersion": "1.0.0",
+  "manifestVersion": "1.6.2",
+  "workflowIdVersion": 2,
   "menuTitle": "Autopilot workflow",
+  "groupConflictExclusions": [
+    { "match": "Prefix", "value": "Intune-Autopilot-All-" },
+    { "match": "Exact", "value": "Intune-Autopilot-AllDevices" },
+    { "match": "Prefix", "value": "Intune-Workstation-" },
+    { "match": "Prefix", "value": "Intune-Workstations-" }
+  ],
+  "workflowPhases": [
+    {
+      "id": "IntunePreparation",
+      "displayName": "Intune preparation",
+      "description": "Resolve the Autopilot serial, remove any associated managed-device record when required, apply the Group Tag, resolve the Entra device, and add it to the pre-provisioning group.",
+      "actionNames": [
+        "ResolveAutopilotDevice",
+        "RemoveAssociatedManagedDevice",
+        "ApplyGroupTag",
+        "AddToPreProvisioningGroup"
+      ]
+    },
+    {
+      "id": "GuidedPreProvisioning",
+      "displayName": "Guided pre-provisioning",
+      "description": "The technician completes network connection, imaging, OOBE, pre-provisioning, deployment-profile validation, reseal, and boot-to-sign-in actions on the physical device.",
+      "actionNames": [
+        "ConfirmImagingAndOobe",
+        "ValidateDeploymentProfile",
+        "ConfirmReseal",
+        "ConfirmBootToSignIn"
+      ]
+    },
+    {
+      "id": "ConditionalRecovery",
+      "displayName": "Conditional Autopilot recovery",
+      "description": "Only used after an Autopilot failure. The CLI submits allowNextEnrollment or guides review of an interrupted request, then checks managed-device absence; the technician confirms Allowed in Intune and physical reset/reimage before preparation restarts.",
+      "actionNames": [
+        "ClearUserlessEnrollmentStatus",
+        "ConfirmRecoveryReadiness"
+      ],
+      "isConditional": true
+    },
+    {
+      "id": "PostProvisioning",
+      "displayName": "Intune post-provisioning",
+      "description": "Resolve and explicitly confirm the regular active C/E technician account from the Windows login or a supplied username, capture the Intune device name, and remove pre-provisioning membership. Never reuse the privileged Graph identity as the assignment target.",
+      "actionNames": [
+        "AssignTechnicianPrimaryUser",
+        "RemoveFromPreProvisioningGroup"
+      ],
+      "plannedGuidedActions": ["CaptureIntuneDeviceName"]
+    },
+    {
+      "id": "PhysicalCompletion",
+      "displayName": "Post-login device completion",
+      "description": "Complete first sign-in, verify the checklist application baseline, request managed-device sync and confirm application retry outcomes, install required updates and follow other procedures, then power off the device. Sync is not the named portal application-remediation action.",
+      "actionNames": [
+        "ConfirmFirstSignIn",
+        "ConfirmApplicationBaseline",
+        "RetryFailedApplications",
+        "ConfirmUpdatesAndShutdown"
+      ]
+    },
+    {
+      "id": "FinalOwnership",
+      "displayName": "Final Intune ownership",
+      "description": "The technician explicitly selects an eligible active C/E account, then assigns and verifies final primary ownership. No manager chain, account role or device-classification inference selects the owner.",
+      "actionNames": ["AssignFinalPrimaryUser"]
+    }
+  ],
   "steps": [
     {
       "id": "A",
+      "displayCode": "A",
+      "details": [
+        "Read the current Autopilot, managed-device and Entra identities for the entered serial. Failed or incomplete discovery is not evidence that a device is absent.",
+        "This read does not enrol, delete or reset a device. Review the identity before any later mutation."
+      ],
       "displayName": "Resolve Autopilot device by serial",
       "enabled": true,
       "actionName": "ResolveAutopilotDevice",
+      "prerequisiteStepIds": [],
       "executionType": "graph",
       "summary": "Load the current Autopilot, Intune, and Entra context for this serial.",
       "requiredPermissions": [
@@ -15,7 +89,7 @@
         "Directory.Read.All"
       ],
       "graphEndpoints": [
-        "GET /beta/deviceManagement/windowsAutopilotDeviceIdentities?$filter=serialNumber eq '{serial}'",
+        "GET /v1.0/deviceManagement/windowsAutopilotDeviceIdentities?$filter=contains(serialNumber,'{serial}')",
         "GET /v1.0/deviceManagement/managedDevices?$filter=serialNumber eq '{serial}'",
         "GET /v1.0/devices?$filter=deviceId eq '{azureAdDeviceId}'"
       ],
@@ -23,9 +97,15 @@
     },
     {
       "id": "B",
+      "displayCode": "B",
+      "details": [
+        "After confirmation, delete only the resolved Intune managed-device record and observe its absence. This does not delete the Autopilot registration or Entra object.",
+        "An accepted deletion awaiting observation remains Submitted; a later check must not blindly submit it again."
+      ],
       "displayName": "Delete associated Intune device",
       "enabled": true,
       "actionName": "RemoveAssociatedManagedDevice",
+      "prerequisiteStepIds": ["A"],
       "executionType": "graph",
       "summary": "Remove any existing Intune managed-device record before pre-provisioning begins.",
       "requiredPermissions": ["DeviceManagementManagedDevices.ReadWrite.All"],
@@ -36,35 +116,35 @@
     },
     {
       "id": "C",
+      "displayCode": "C",
+      "details": [
+        "Derive the Group Tag from the selected site and device type, submit it to the resolved Autopilot identity, then read it back.",
+        "A successful request alone is not verification. If the new tag is not yet visible, retain Submitted and check again later."
+      ],
       "displayName": "Apply required Group Tag",
       "enabled": true,
       "actionName": "ApplyGroupTag",
+      "prerequisiteStepIds": ["A", "B"],
       "executionType": "graph",
       "summary": "Set the enforced SITECODE-DeviceType Group Tag on the Autopilot identity.",
       "requiredPermissions": ["DeviceManagementServiceConfig.ReadWrite.All"],
       "graphEndpoints": [
-        "POST /beta/deviceManagement/windowsAutopilotDeviceIdentities/{autopilotDeviceId}/updateDeviceProperties"
+        "POST /v1.0/deviceManagement/windowsAutopilotDeviceIdentities/{autopilotDeviceId}/updateDeviceProperties",
+        "GET /v1.0/deviceManagement/windowsAutopilotDeviceIdentities/{autopilotDeviceId}"
       ],
       "notes": "The script always derives the Group Tag from the selected site and device type."
     },
     {
       "id": "D",
-      "displayName": "Validate deployment profile assignment",
-      "enabled": true,
-      "actionName": "ValidateDeploymentProfile",
-      "executionType": "guided",
-      "summary": "Confirm that the required Autopilot deployment profile is assigned.",
-      "requiredPermissions": ["DeviceManagementServiceConfig.Read.All"],
-      "graphEndpoints": [
-        "GET /beta/deviceManagement/windowsAutopilotDeviceIdentities/{autopilotDeviceId}"
+      "displayCode": "D",
+      "details": [
+        "Resolve the exact configured group, inspect other memberships matching its configured prefix, and preview any permitted correction. Conflict removal defaults to No and removes membership references, never groups.",
+        "Dynamic, mail-enabled or role-assignable groups are not automatically corrected. Verify the intended membership before proceeding."
       ],
-      "notes": "This release records technician confirmation so the workflow stays honest even where tenant-specific profile fields vary."
-    },
-    {
-      "id": "E",
       "displayName": "Add device to pre-provisioning group",
       "enabled": true,
       "actionName": "AddToPreProvisioningGroup",
+      "prerequisiteStepIds": ["A", "B", "C"],
       "executionType": "graph",
       "summary": "Add the Entra device object to the configured Intune pre-provisioning group.",
       "requiredPermissions": [
@@ -74,30 +154,136 @@
       ],
       "graphEndpoints": [
         "GET /v1.0/groups?$filter=displayName eq '{groupName}'",
-        "POST /v1.0/groups/{groupId}/members/$ref"
+        "GET /v1.0/devices/{directoryObjectId}/memberOf",
+        "GET /v1.0/groups/{groupId}?$select=id",
+        "POST /v1.0/groups/{groupId}/members/$ref",
+        "DELETE /v1.0/groups/{groupId}/members/{directoryObjectId}/$ref"
       ],
-      "notes": "Group membership is part of the formal manifest because it must happen at the correct point in the Autopilot flow."
+      "notes": "Group membership is part of the formal manifest because it must happen at the correct point in the Autopilot flow. A required write is blocked unless the target is an assigned, non-mail-enabled security group that is not role-assignable; an already-correct read-back state requires no write."
+    },
+    {
+      "id": "E",
+      "displayCode": "E",
+      "details": [
+        "On the physical computer, connect the required network, complete imaging and OOBE preparation, and reach the Autopilot deployment-profile screen.",
+        "Record only what you have observed. The script does not perform imaging or prove a physical result through Graph."
+      ],
+      "displayName": "Confirm network, imaging and OOBE preparation",
+      "enabled": true,
+      "actionName": "ConfirmImagingAndOobe",
+      "prerequisiteStepIds": ["D"],
+      "executionType": "guided",
+      "summary": "Follow checklist steps 6-10 to reach the Autopilot deployment-profile screen.",
+      "requiredPermissions": [],
+      "graphEndpoints": [],
+      "notes": "Confirmation defaults to Y by operator decision. Records technician evidence, not Graph verification."
     },
     {
       "id": "F",
+      "displayCode": "F",
+      "details": [
+        "Compare the deployment profile shown on the computer with the configured required profile before continuing pre-provisioning.",
+        "This is technician confirmation, not a claim that a successful Graph request proves profile assignment."
+      ],
+      "displayName": "Validate deployment profile assignment",
+      "enabled": true,
+      "actionName": "ValidateDeploymentProfile",
+      "prerequisiteStepIds": ["A", "B", "C", "D", "E"],
+      "executionType": "guided",
+      "summary": "Confirm that the required Autopilot deployment profile is assigned.",
+      "requiredPermissions": [],
+      "graphEndpoints": [],
+      "notes": "This release records technician confirmation so the workflow stays honest even where tenant-specific profile fields vary."
+    },
+    {
+      "id": "P",
+      "displayCode": "P",
+      "details": [
+        "Use only within an explicitly entered recovery workflow after a failed build. Submit allowNextEnrollment for the resolved Autopilot identity.",
+        "Submission is not proof that Intune shows Allowed. Do not use this action as a normal build step or as an automatic retry.",
+        "If an earlier request outcome is unknown, check the device in Intune. Confirming Allowed defaults to No; no request is resent."
+      ],
       "displayName": "Clear Userless Enrolment Status block",
       "enabled": true,
       "actionName": "ClearUserlessEnrollmentStatus",
+      "prerequisiteStepIds": ["A"],
+      "activationRequirement": "RecoveryMode",
       "executionType": "graph",
-      "summary": "Invoke the documented allowNextEnrollment action to clear the Userless Enrolment Status gate.",
+      "summary": "Submit allowNextEnrollment once for the current recovery, or review an interrupted request without resending.",
       "requiredPermissions": ["DeviceManagementServiceConfig.ReadWrite.All"],
       "graphEndpoints": [
         "POST /beta/deviceManagement/windowsAutopilotDeviceIdentities/{autopilotDeviceId}/allowNextEnrollment"
       ],
-      "notes": "The workflow now clears the gate directly against the Autopilot device identity instead of relying on technician-only confirmation."
+      "notes": "An accepted request records Submitted, not verified Allowed. An uncertain request is not resent: confirming Allowed records a technician observation and starts a fresh two-minute wait, without claiming HTTP acceptance."
+    },
+    {
+      "id": "Q",
+      "displayCode": "Q",
+      "details": [
+        "Wait two minutes from the current recovery's accepted response, or from the technician's Allowed observation when the earlier request outcome is unknown.",
+        "Verify managed-device absence and confirm Allowed in Intune plus the physical reset or reimage.",
+        "Close recovery only after these checks. Retain the failed cycle as evidence before preparation starts again."
+      ],
+      "displayName": "Confirm recovery reset, reimage and Allowed status",
+      "enabled": true,
+      "actionName": "ConfirmRecoveryReadiness",
+      "prerequisiteStepIds": ["A"],
+      "activationRequirement": "RecoveryMode",
+      "executionType": "guided",
+      "summary": "Follow checklist step 12: wait from the accepted response or Allowed observation, confirm deletion and Allowed, then confirm reset/reimage.",
+      "requiredPermissions": ["DeviceManagementManagedDevices.Read.All"],
+      "graphEndpoints": [
+        "GET /v1.0/deviceManagement/managedDevices?$filter=serialNumber eq '{serial}'"
+      ],
+      "notes": "Requires current-cycle P evidence. Allowed is technician evidence, not Graph verification. Default Y. Archives prior results and restarts from B."
     },
     {
       "id": "G",
+      "displayCode": "G",
+      "details": [
+        "Observe successful pre-provisioning on the physical computer, then perform and confirm reseal as required by the checklist.",
+        "Do not confirm an intended future action or treat a failed pre-provisioning result as a completed reseal."
+      ],
+      "displayName": "Confirm successful pre-provisioning and reseal",
+      "enabled": true,
+      "actionName": "ConfirmReseal",
+      "prerequisiteStepIds": ["F"],
+      "executionType": "guided",
+      "summary": "Follow checklist step 13: complete setup, reseal and wait for shutdown.",
+      "requiredPermissions": [],
+      "graphEndpoints": [],
+      "notes": "On failure, leave this step incomplete and use recovery option X. Confirmation defaults to Y."
+    },
+    {
+      "id": "H",
+      "displayCode": "H",
+      "details": [
+        "Boot the resealed computer and observe that it reaches the required Windows sign-in screen.",
+        "The confirmation records the technician's observation; it does not sign in or establish a primary-user relationship."
+      ],
+      "displayName": "Confirm boot to Windows sign-in",
+      "enabled": true,
+      "actionName": "ConfirmBootToSignIn",
+      "prerequisiteStepIds": ["G"],
+      "executionType": "guided",
+      "summary": "Follow checklist step 14: power up and leave the device at the Windows sign-in screen.",
+      "requiredPermissions": [],
+      "graphEndpoints": [],
+      "notes": "Do not perform the first sign-in before technician assignment and pre-provisioning group removal. Confirmation defaults to Y."
+    },
+    {
+      "id": "I",
+      "displayCode": "I",
+      "details": [
+        "Resolve and explicitly confirm the active regular C/E technician account. Use the Windows directory username when available, not the privileged Graph sign-in identity.",
+        "Assign the intended user and observe the Autopilot and managed-device relationships. Retain pending or technician-confirmed evidence distinctly from Graph verification."
+      ],
       "displayName": "Assign technician as primary user",
       "enabled": true,
       "actionName": "AssignTechnicianPrimaryUser",
+      "prerequisiteStepIds": ["F", "H"],
       "executionType": "hybrid",
-      "summary": "Assign the authenticated technician account across the available Autopilot and managed-device user-assignment surfaces.",
+      "summary": "Resolve the Windows login's regular technician account and require explicit default-No confirmation before assignment on the available Autopilot and managed-device surfaces.",
       "requiredPermissions": [
         "DeviceManagementServiceConfig.ReadWrite.All",
         "DeviceManagementManagedDevices.ReadWrite.All",
@@ -108,26 +294,19 @@
         "POST /v1.0/deviceManagement/windowsAutopilotDeviceIdentities/{autopilotDeviceId}/assignUserToDevice",
         "POST /v1.0/deviceManagement/managedDevices('{managedDeviceId}')/users/$ref"
       ],
-      "notes": "The target account must be the authenticated active C/E account. Managed-device association uses a raw Graph fallback because the PowerShell SDK exposes a reader but no writer for that relation."
+      "notes": "The target must be a resolved eligible active C/E account, not the privileged Graph account. CA plus letters removes CA; CA plus digits replaces CA with e. Uncertain names prompt. Declining confirmation returns to username entry. Unresolved prior assignment targets cannot silently change. Managed-device reference-write support remains a tenant acceptance gate; submission alone is not verification."
     },
     {
-      "id": "H",
-      "displayName": "Retry failed application installations",
-      "enabled": true,
-      "actionName": "RetryFailedApplications",
-      "executionType": "hybrid",
-      "summary": "Issue a sync and then record whether failed application installs have retried successfully.",
-      "requiredPermissions": ["DeviceManagementManagedDevices.ReadWrite.All"],
-      "graphEndpoints": [
-        "POST /v1.0/deviceManagement/managedDevices/{managedDeviceId}/syncDevice"
+      "id": "J",
+      "displayCode": "J",
+      "details": [
+        "Remove the device's membership reference from the exact configured pre-provisioning group at the required post-provisioning point.",
+        "Read back the resulting membership state. This action does not delete the group or undo unrelated directory memberships."
       ],
-      "notes": "The sync is automated; the application retry outcome is still confirmed by the technician."
-    },
-    {
-      "id": "I",
       "displayName": "Remove device from pre-provisioning group",
       "enabled": true,
       "actionName": "RemoveFromPreProvisioningGroup",
+      "prerequisiteStepIds": ["I"],
       "executionType": "graph",
       "summary": "Remove the device from the configured pre-provisioning group at the correct workflow point.",
       "requiredPermissions": [
@@ -136,17 +315,99 @@
         "Directory.Read.All"
       ],
       "graphEndpoints": [
+        "GET /v1.0/groups?$filter=displayName eq '{groupName}'",
+        "GET /v1.0/devices/{directoryObjectId}/memberOf",
+        "GET /v1.0/groups/{groupId}?$select=id",
         "DELETE /v1.0/groups/{groupId}/members/{directoryObjectId}/$ref"
       ],
-      "notes": "This mirrors the PDF workflow and must remain explicit in the manifest."
+      "notes": "This mirrors the PDF workflow and must remain explicit in the manifest. A required write uses only the membership reference and is blocked for unsupported group types; an already-absent verified state requires no write."
     },
     {
-      "id": "J",
+      "id": "K",
+      "displayCode": "K",
+      "details": [
+        "Complete the required first Windows sign-in on the physical computer and confirm the observed result.",
+        "This action does not capture a password or infer that applications and updates have completed."
+      ],
+      "displayName": "Confirm first Windows sign-in",
+      "enabled": true,
+      "actionName": "ConfirmFirstSignIn",
+      "prerequisiteStepIds": ["I", "J", "H"],
+      "executionType": "guided",
+      "summary": "Follow checklist step 17: sign in after technician assignment and pre-provisioning group removal.",
+      "requiredPermissions": [],
+      "graphEndpoints": [],
+      "notes": "Confirmation defaults to Y. Records technician observation, not Graph verification."
+    },
+    {
+      "id": "L",
+      "displayCode": "L",
+      "details": [
+        "Inspect the checklist application baseline on the computer and confirm the required applications and outcomes.",
+        "Missing or failed applications must not be marked complete merely because a sync request succeeded."
+      ],
+      "displayName": "Confirm required application baseline",
+      "enabled": true,
+      "actionName": "ConfirmApplicationBaseline",
+      "prerequisiteStepIds": ["K"],
+      "executionType": "guided",
+      "summary": "Follow checklist steps 18-19: verify every required application and install one at a time in order.",
+      "requiredPermissions": [],
+      "graphEndpoints": [],
+      "notes": "Leave incomplete while any required installation is failing. Step M can request sync for a failure, not the named portal remediation, or record no failures after this baseline is confirmed. Confirmation defaults to Y."
+    },
+    {
+      "id": "M",
+      "displayCode": "M",
+      "details": [
+        "Choose no failures or request a sync for failed applications. Enter defaults to no failures, which requires the application baseline to be confirmed first.",
+        "Sync is not the named portal application-remediation action and does not prove installation success. An accepted sync must not be automatically replayed."
+      ],
+      "displayName": "Review application failures and sync if needed",
+      "enabled": true,
+      "actionName": "RetryFailedApplications",
+      "prerequisiteStepIds": ["I", "K"],
+      "executionType": "hybrid",
+      "summary": "Record no failures after baseline confirmation, or request sync for a failed application and record its outcome.",
+      "requiredPermissions": [
+        "DeviceManagementManagedDevices.ReadWrite.All",
+        "DeviceManagementManagedDevices.PrivilegedOperations.All"
+      ],
+      "graphEndpoints": [
+        "POST /v1.0/deviceManagement/managedDevices/{managedDeviceId}/syncDevice"
+      ],
+      "notes": "No failures is the default and sends no sync; it requires the confirmed baseline. On the failure path, sync is automated and the retry outcome is separately confirmed by the technician. Neither path invokes the named portal remediation."
+    },
+    {
+      "id": "N",
+      "displayCode": "N",
+      "details": [
+        "Install the required manufacturer and other updates, complete the remaining local procedures, and shut down the computer as required by the checklist.",
+        "Confirm only after observing the required outcomes. The script does not remotely certify patch currency or power state."
+      ],
+      "displayName": "Confirm updates, required procedures and shutdown",
+      "enabled": true,
+      "actionName": "ConfirmUpdatesAndShutdown",
+      "prerequisiteStepIds": ["L"],
+      "executionType": "guided",
+      "summary": "Follow checklist steps 20-22: complete manufacturer updates, reboots and required procedures, then power off.",
+      "requiredPermissions": [],
+      "graphEndpoints": [],
+      "notes": "Use approved manufacturer procedures for non-Dell devices. Confirmation defaults to Y."
+    },
+    {
+      "id": "O",
+      "displayCode": "O",
+      "details": [
+        "Explicitly select and confirm the eligible active C/E final user, then assign and verify the intended primary-user relationships.",
+        "Complete the external checklist handoffs separately. Neither account selection nor an administrative completion override proves a successful physical build."
+      ],
       "displayName": "Assign final primary user",
       "enabled": true,
       "actionName": "AssignFinalPrimaryUser",
+      "prerequisiteStepIds": ["J", "N"],
       "executionType": "hybrid-selection",
-      "summary": "Search for an active C/E caregiver or manager account and assign it across the available Autopilot and managed-device user-assignment surfaces.",
+      "summary": "Explicitly select an eligible active C/E account and assign it across the available Autopilot and managed-device user-assignment surfaces.",
       "requiredPermissions": [
         "DeviceManagementServiceConfig.ReadWrite.All",
         "DeviceManagementManagedDevices.ReadWrite.All",
@@ -159,7 +420,7 @@
         "POST /v1.0/deviceManagement/windowsAutopilotDeviceIdentities/{autopilotDeviceId}/assignUserToDevice",
         "POST /v1.0/deviceManagement/managedDevices('{managedDeviceId}')/users/$ref"
       ],
-      "notes": "Selection is filtered to active C/E accounts only. Managed-device association uses a raw Graph fallback because the PowerShell SDK exposes a reader but no writer for that relation."
+      "notes": "Selection is filtered to active C/E accounts only; contractors and non-managers remain eligible. No manager-chain or role inference is performed. Both assignment surfaces use the shared guarded REST transport. Managed-device reference-write support remains a tenant acceptance gate; submission alone is not verification."
     }
   ]
 }

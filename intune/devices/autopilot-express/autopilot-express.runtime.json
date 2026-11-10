@@ -2,11 +2,14 @@
   "configVersion": "1.0.0",
   "organisationName": "Example Health Network",
   "graph": {
-    "authMode": "Browser",
+    "authMode": "DeviceCode",
     "contextScope": "Process",
+    "expectedTenantId": "",
     "requiredScopes": [
       "DeviceManagementServiceConfig.ReadWrite.All",
       "DeviceManagementManagedDevices.ReadWrite.All",
+      "DeviceManagementManagedDevices.PrivilegedOperations.All",
+      "DeviceManagementScripts.Read.All",
       "Group.ReadWrite.All",
       "GroupMember.ReadWrite.All",
       "User.Read.All",
@@ -19,11 +22,39 @@
   },
   "autopilot": {
     "deploymentProfileDisplayName": "SJOG Hybrid Join",
-    "preProvisioningGroupDisplayName": "Intune-Autopilot-PreProvisioning",
+    "preProvisioningGroupDisplayName": "Intune-Autopilot-ESP-Prod",
+    "preProvisioningGroupPrefix": "Intune-Autopilot-",
     "technicianUpnPrefixes": ["C", "E"],
     "directorySearchLimit": 15,
+    "directorySearchPageSize": 100,
     "recentUsersLimit": 8,
-    "missingSerialHandoffNote": "Use the external Autopilot upload guide when the serial is not yet present in Autopilot."
+    "missingSerialHandoffNote": "Use the external Autopilot upload guide when the serial is not yet present in Autopilot.",
+    "hashImport": {
+      "enabled": true,
+      "searchDirectories": ["hashes"],
+      "filenamePrefixes": ["Autopilot", "HWID", "DeviceHash", "HardwareHash"],
+      "includeRemovableMedia": true,
+      "removableSubdirectories": ["", "HWID", "Autopilot", "MDMDiagnostics"]
+    }
+  },
+  "storage": {
+    "mode": "Local",
+    "sharedDataRoot": "",
+    "sharedBenchId": "",
+    "lockTimeoutSeconds": 30,
+    "requireAtomicWrites": true
+  },
+  "scannerSerialNormalisation": {
+    "serialPattern": "^[A-Za-z0-9-]{4,64}$",
+    "rules": [
+      {
+        "name": "MyDell support QR code",
+        "hostPattern": "(^|\\.)dell\\.com$",
+        "pathPattern": "^/support/pid$",
+        "queryParameter": "t",
+        "valuePattern": "^[A-Za-z0-9]{7}$"
+      }
+    ]
   },
   "demo": {
     "tenantDisplayName": "Example Health Network Demo",

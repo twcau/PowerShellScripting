@@ -7,8 +7,8 @@ Automates review of quarantined messages and blocks sender domains in the Tenant
 
 .NOTES
 .FILECREATED      : 2025-12-15
-.FILELASTUPDATED  : 2026-04-28
-.VERSION          : 2.1.1
+.FILELASTUPDATED  : 2026-07-05
+.VERSION          : 2.1.3
 .REQUIRES         : ExchangeOnlineManagement (EXO V3 cmdlets)
 .EXITCODES        : 0 = Success; 2 = Failed header coverage (when -FailOnLowHeaderCoverage)
 
@@ -109,6 +109,17 @@ New-TenantAllowBlockListItems    https://learn.microsoft.com/powershell/module/e
 Delete-QuarantineMessage         https://learn.microsoft.com/powershell/module/exchangepowershell/delete-quarantinemessage
 
 .CHANGELOG
+2.1.3 (2026 - 07 - 05)
+- Release actions now require terminating EXO success before the script counts them as released.
+- Quarantine paging is now shared between initial discovery and post-release refresh for consistent results.
+- DNSBL export now detects mandatory CompressOutput support at runtime instead of relying on fallback-by-exception.
+- Release-stage allow creation is now duplicate-safe and retry-aware.
+- Default delete-after-release behaviour now uses soft delete so successfully released items do not remain in quarantine.
+2.1.2 (2026 - 05 - 17)
+- DNSBL reporting now honours the effective defaults interaction mode when Pref_ReportToDnsblDefault = 'Y'.
+- Suppressed released sender roots from the block candidate list for the current run.
+- Added operator progress messaging for release processing, header analysis, TABL submission, and delete-list preparation.
+- Reworked TABL confirmation output to distinguish accepted additions from delayed snapshot visibility.
 2.1.1 (2026 - 04 - 28)
 - DNSBL reporting now requires the explicit switch or an explicit -UseDefaults run with Pref_ReportToDnsblDefault = 'Y'.
 - Added helper regression coverage for PSL loading, client-side filtering, export fallback, and expiry validation.
@@ -350,6 +361,124 @@ function Write-ConsoleMessage {
     Write-Information -MessageData $renderedMessage -InformationAction Continue
 }
 
+function Write-ActivityProgress {
+    <#
+    .SYNOPSIS
+    Updates a terminal progress record for long-running workflow steps.
+
+    .DESCRIPTION
+    Interactive stages such as release handling, header analysis, TABL
+    confirmation, DNSBL submission, and delete preparation can take noticeable
+    time. This helper standardises progress output so operators can see that the
+    script is still working.
+
+    .PARAMETER Activity
+    High-level label for the current workflow stage.
+
+    .PARAMETER Status
+    Short status text for the current iteration.
+
+    .PARAMETER Current
+    Current item number.
+
+    .PARAMETER Total
+    Total item count for the stage.
+
+    .PARAMETER Completed
+    Marks the progress record as complete.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Activity,
+        [Parameter()][string]$Status = '',
+        [Parameter()][int]$Current = 0,
+        [Parameter()][int]$Total = 0,
+        [switch]$Completed
+    )
+
+    if (-not (Test-ShouldEmitProgressUpdate -Activity $Activity -Current $Current -Total $Total -Completed:$Completed)) {
+        return
+    }
+
+    $progressParams = @{
+        Activity = $Activity
+        Status   = $Status
+    }
+
+    if ($Completed) {
+        $progressParams['Completed'] = $true
+    }
+    elseif ($Total -gt 0) {
+        $percent = [math]::Min(100, [math]::Max(0, [math]::Floor(($Current / $Total) * 100)))
+        $progressParams['PercentComplete'] = $percent
+    }
+
+    Write-Progress @progressParams
+}
+
+function Test-ShouldEmitProgressUpdate {
+    <#
+    .SYNOPSIS
+    Determines whether a progress update should be emitted.
+
+    .DESCRIPTION
+    Frequent per-item progress writes can become a measurable overhead when the
+    script processes large quarantine sets. This helper applies an adaptive
+    cadence so operators still see useful progress while the host output cost is
+    reduced for large runs.
+
+    .PARAMETER Activity
+    Progress activity label.
+
+    .PARAMETER Current
+    Current item number.
+
+    .PARAMETER Total
+    Total item count for the stage.
+
+    .PARAMETER Completed
+    Marks the activity as completed.
+
+    .OUTPUTS
+    [bool] True when Write-Progress should be called.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)][string]$Activity,
+        [Parameter()][int]$Current = 0,
+        [Parameter()][int]$Total = 0,
+        [switch]$Completed
+    )
+
+    if ($Pref_ProgressUpdateMode -eq 'EveryItem') { return $true }
+    if ($Completed) { return $true }
+    if ($Total -le 0) { return $true }
+
+    if (-not $script:ProgressState) { $script:ProgressState = @{} }
+
+    $now = Get-Date
+    $interval = if ($Total -le 10) { 1 } elseif ($Total -le 50) { 2 } elseif ($Total -le 200) { 5 } else { 10 }
+
+    if (-not $script:ProgressState.ContainsKey($Activity)) {
+        $script:ProgressState[$Activity] = [pscustomobject]@{ LastCurrent = $Current; LastTimestamp = $now }
+        return $true
+    }
+
+    $state = $script:ProgressState[$Activity]
+    if ($Current -ge $Total) {
+        $script:ProgressState[$Activity] = [pscustomobject]@{ LastCurrent = $Current; LastTimestamp = $now }
+        return $true
+    }
+
+    if ((($Current - $state.LastCurrent) -ge $interval) -or (($now - $state.LastTimestamp).TotalSeconds -ge $Pref_ProgressUpdateMinimumSeconds)) {
+        $script:ProgressState[$Activity] = [pscustomobject]@{ LastCurrent = $Current; LastTimestamp = $now }
+        return $true
+    }
+
+    return $false
+}
+
 function Resolve-PrimaryDomain {
     <#
     .SYNOPSIS
@@ -453,7 +582,8 @@ function Test-DnsblReportingEnabled {
     param()
 
     if ($ReportToDnsbl) { return $true }
-    if ($UseDefaults -and ($Pref_ReportToDnsblDefault -eq 'Y')) { return $true }
+    $effectiveMode = Get-InteractionMode
+    if (($effectiveMode -eq 'Defaults') -and ((Test-ValidYesNo $Pref_ReportToDnsblDefault) -eq 'Y')) { return $true }
     return $false
 }
 
@@ -662,7 +792,7 @@ function Send-GraphMailWithAttachment {
         [Parameter(Mandatory)][string]$FromUser,
         [Parameter(Mandatory)][string]$To,
         [Parameter(Mandatory)][string]$Subject,
-        [Parameter(Mandatory)][string]$BodyText,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$BodyText,
         [Parameter(Mandatory)][string]$AttachmentPath,
         [int]$MaxRetries = 0,
         [int]$BackoffSecondsBase = 2
@@ -736,6 +866,7 @@ function Invoke-ReportToDnsbl {
         return [pscustomobject]@{ Reported = 0; MessagesReported = 0; RecipientSubmissionsSent = 0; Failed = 0; Skipped = 0 }
     }
     if (-not (Test-DnsblReportingEnabled)) {
+        Write-ConsoleMessage "DNSBL reporting is disabled for this run. Use -ReportToDnsbl, or run with -UseDefaults after setting Pref_ReportToDnsblDefault = 'Y', to enable it." -ForegroundColor DarkYellow
         return [pscustomobject]@{ Reported = 0; MessagesReported = 0; RecipientSubmissionsSent = 0; Failed = 0; Skipped = 0 }
     }
 
@@ -818,19 +949,7 @@ function Invoke-ReportToDnsbl {
 
         $exp = $null
         try {
-            # Prefer calling with -CompressOutput:$false. If the parameter doesn't exist on this EXO version,
-            # fall back to the invocation without it.
-            try {
-                $exp = Export-QuarantineMessage -Identity $m.Identity -ReasonForExport $effectiveReason -ForceConversionToMime -CompressOutput:$false
-            }
-            catch [System.Management.Automation.ParameterBindingException] {
-                if ($_.Exception.Message -match "matches parameter name 'CompressOutput'|Parameter set") {
-                    $exp = Export-QuarantineMessage -Identity $m.Identity -ReasonForExport $effectiveReason -ForceConversionToMime
-                }
-                else {
-                    throw
-                }
-            }
+            $exp = Invoke-ExportQuarantineMessageSafe -Identity $m.Identity -ReasonForExport $effectiveReason
         }
         catch { Write-Warning ("Export failed for {0}: {1}" -f $m.Identity, $_.Exception.Message); $failed++; continue }
         if (-not $exp -or -not $exp.eml) { Write-Warning ("Export returned no data for {0}" -f $m.Identity); $failed++; continue }
@@ -887,7 +1006,7 @@ $Pref_CreateAllowDefault = 'Y'        # 'Y' to create a Tenant Allow entry; 'N' 
 $Pref_AllowScopeDefault = 'Domain'    # 'Address' for per-address allow; 'Domain' for domain-level allow
 $Pref_AllowExpiryDefault = '45'       # One of: '45' (last-used), '1', '7', '30', '45', 'Date'
 $Pref_AllowExpiryDateDefault = $null  # When 'Date' is selected, supply a specific [datetime] (optional)
-$Pref_DeleteAfterReleaseDefault = 'None' # 'None', 'Soft', or 'Hard'
+$Pref_DeleteAfterReleaseDefault = 'Soft' # 'None', 'Soft', or 'Hard'
 $Pref_AllowNoteAuto = $true           # When true, always use Get-BlockNote for allow-entry notes (mandatory)
 $Pref_UseDefaultsNoPromptsDefault = $false # When true, skip release prompts and use defaults
 $Pref_AllowNoteTemplate = 'Quarantine-To-Block script, added {DATE}, by {UPN}'
@@ -913,7 +1032,7 @@ $Pref_BlockExpiryDefault = 'Never'
 $Pref_BlockExpiryDateDefault = $null
 
 # DNSBL reporting defaults
-$Pref_ReportToDnsblDefault = 'N'                     # 'Y' to enable reporting only when -UseDefaults is explicitly requested
+$Pref_ReportToDnsblDefault = 'Y'                     # 'Y' to enable reporting only when -UseDefaults is explicitly requested
 $Pref_DnsblModeDefault = 'ExportAttach'              # Only supported mode in this version
 $Pref_DnsblRecipientsDefault = @(
     'submit.gbRjyoiL5EmAY4n7@spam.spamcop.net',
@@ -944,6 +1063,8 @@ $Pref_AuthLoginMode = 'WebLogin'
 # When using WAM, passing -UserPrincipalName can mis-select accounts when the OS profile differs.
 # Set false to omit UPN in WAM mode; set true to force UPN.
 $Pref_AuthUseUPNWithWAM = $false
+# Prompt before launching interactive Exchange Online authentication unless -UseDefaults is supplied.
+$Pref_ConfirmBeforeExchangeConnectDefault = 'Y'
 
 # Offer to persist corrected defaults back into this script file when found
 $Pref_PromptToPersistDefaults = $false
@@ -952,6 +1073,15 @@ $Pref_PromptToPersistDefaults = $false
 $Pref_ConfirmBackoffStartSeconds = 3
 $Pref_ConfirmBackoffIncrementSeconds = 3
 $Pref_ConfirmBackoffMaxSeconds = 12
+
+# Performance tuning preferences
+$Pref_PostReleaseRefreshMode = 'Auto'              # 'Auto', 'Full', or 'Skip'
+$Pref_TablConfirmationPolicy = 'Strict'            # 'Strict' or 'AcceptedIsEnough'
+$Pref_DeleteListResolutionMode = 'CachedOnly'      # 'CachedOnly' or 'FallbackFetch'
+$Pref_ProgressUpdateMode = 'Adaptive'              # 'Adaptive' or 'EveryItem'
+$Pref_ProgressUpdateMinimumSeconds = 1             # Minimum seconds between progress updates for the same activity
+$Pref_HeaderAnalysisMode = 'ParallelAuto'          # 'ParallelAuto' or 'Serial'
+$Pref_HeaderParallelThrottle = 4                   # Max concurrent header fetch workers when parallel mode succeeds
 
 # Validation helpers for preferences
 function Test-ValidAllowScope {
@@ -1306,7 +1436,8 @@ function Initialize-PreferenceState {
             @{ N = 'Pref_ReleaseToAllDefault'; V = $Pref_ReleaseToAllDefault },
             @{ N = 'Pref_ReportFalsePositiveDefault'; V = $Pref_ReportFalsePositiveDefault },
             @{ N = 'Pref_AllowSenderDefault'; V = $Pref_AllowSenderDefault },
-            @{ N = 'Pref_CreateAllowDefault'; V = $Pref_CreateAllowDefault }
+            @{ N = 'Pref_CreateAllowDefault'; V = $Pref_CreateAllowDefault },
+            @{ N = 'Pref_ConfirmBeforeExchangeConnectDefault'; V = $Pref_ConfirmBeforeExchangeConnectDefault }
         )) {
         $fixed = Test-ValidYesNo $pair.V
         if ($fixed -ne $pair.V) { Register-CorrectedPreference -Name $pair.N -Correct $fixed }
@@ -1375,6 +1506,8 @@ function Initialize-PreferenceState {
 # Transcript
 # ---------------------------
 # Use a per-run unique transcript path to avoid file-in-use conflicts
+$script:IsLibraryMode = [bool]($NoMain -or $Script:LibraryMode -or $env:Q2B_LibraryMode -eq '1')
+$script:TranscriptStarted = $false
 $script:RunTranscriptPath = $TranscriptPath
 if ([string]::IsNullOrWhiteSpace($script:RunTranscriptPath)) {
     $script:RunTranscriptPath = Join-Path $env:TEMP ("quarantine-to-block_{0}.transcript.log" -f (Get-Date -Format "yyyyMMdd_HHmmss"))
@@ -1382,7 +1515,13 @@ if ([string]::IsNullOrWhiteSpace($script:RunTranscriptPath)) {
 elseif ($script:RunTranscriptPath -like "*quarantine-to-block.transcript.log") {
     $script:RunTranscriptPath = Join-Path $env:TEMP ("quarantine-to-block_{0}.transcript.log" -f (Get-Date -Format "yyyyMMdd_HHmmss"))
 }
-try { Start-Transcript -Path $script:RunTranscriptPath -Force | Out-Null } catch { Write-Warning ("Start-Transcript failed: {0}" -f $_.Exception.Message) }
+if (-not $script:IsLibraryMode) {
+    try {
+        Start-Transcript -Path $script:RunTranscriptPath -Force | Out-Null
+        $script:TranscriptStarted = $true
+    }
+    catch { Write-Warning ("Start-Transcript failed: {0}" -f $_.Exception.Message) }
+}
 
 # ---------------------------
 # Install EXO module if needed
@@ -1468,6 +1607,100 @@ function Test-ExchangeOnlineConnected {
 # Connect if not already connected; track ownership for disconnect
 # ---------------------------
 $script:DidConnect = $false
+$script:ConnectExchangeOnlineFailureReason = ''
+
+function Get-ExceptionMessageChain {
+    <#
+    .SYNOPSIS
+    Builds a concise message chain from an exception and its inner exceptions.
+
+    .DESCRIPTION
+    Authentication failures from Exchange Online can wrap the useful operator
+    signal several levels deep. This helper keeps cancellation and network
+    classification logic readable without printing full stack traces.
+
+    .PARAMETER Exception
+    Exception object to inspect.
+
+    .OUTPUTS
+    [string] Concatenated exception messages.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter()][System.Exception]$Exception)
+
+    $messages = New-Object System.Collections.Generic.List[string]
+    $currentException = $Exception
+    while ($null -ne $currentException) {
+        if (-not [string]::IsNullOrWhiteSpace($currentException.Message)) {
+            $messages.Add($currentException.Message) | Out-Null
+        }
+        $currentException = $currentException.InnerException
+    }
+
+    return (($messages | Select-Object -Unique) -join ' ')
+}
+
+function Test-ExchangeOnlineAuthCancelled {
+    <#
+    .SYNOPSIS
+    Determines whether an Exchange Online authentication failure was user-cancelled.
+
+    .DESCRIPTION
+    Device-code and brokered authentication can fail because the operator closes
+    the browser prompt, lets the device-code flow time out, or deliberately
+    cancels sign-in. These are expected exits, not script defects, so the main
+    path should stop retrying and report a clean cancellation message.
+
+    .PARAMETER ErrorRecord
+    Error record captured from the connection attempt.
+
+    .OUTPUTS
+    [bool] True when the error represents user cancellation or auth timeout.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory)]$ErrorRecord)
+
+    $message = Get-ExceptionMessageChain -Exception $ErrorRecord.Exception
+    if ([string]::IsNullOrWhiteSpace($message)) { $message = [string]$ErrorRecord }
+
+    return ($message -match '(?i)user\s+aborted|operation\s+was\s+cancelled|operation\s+was\s+canceled|task\s+was\s+canceled|authentication\s+cancelled|authentication\s+canceled|cancel\(\)')
+}
+
+function Test-MicrosoftLoginEndpointResolved {
+    <#
+    .SYNOPSIS
+    Verifies that the Microsoft identity endpoint resolves before authentication starts.
+
+    .DESCRIPTION
+    Exchange Online authentication emits a verbose MSAL stack trace when DNS
+    cannot resolve login.microsoftonline.com. This helper performs a quick
+    resolution check first so the retry loop can show a concise, actionable
+    warning instead of invoking the interactive token flow while name resolution
+    is unavailable.
+
+    .PARAMETER HostName
+    Host name to resolve. Defaults to the Microsoft identity endpoint used by
+    Exchange Online authentication.
+
+    .OUTPUTS
+    [bool] True when the host resolves; otherwise False.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([string]$HostName = 'login.microsoftonline.com')
+
+    try {
+        $addresses = [System.Net.Dns]::GetHostAddresses($HostName)
+        return ($null -ne $addresses -and $addresses.Count -gt 0)
+    }
+    catch {
+        Write-Verbose ("Unable to resolve {0}: {1}" -f $HostName, $_.Exception.Message)
+        return $false
+    }
+}
+
 function Connect-ExchangeOnlineWithRetry {
     <#
     .SYNOPSIS
@@ -1506,11 +1739,20 @@ function Connect-ExchangeOnlineWithRetry {
     if (Test-ExchangeOnlineConnected) {
         Write-Verbose "Exchange Online already connected; skipping reconnection."
         $script:DidConnect = $false
+        $script:ConnectExchangeOnlineFailureReason = ''
         return $true
     }
 
     $tries = 0
     do {
+        if (-not (Test-MicrosoftLoginEndpointResolved)) {
+            $tries++
+            $script:ConnectExchangeOnlineFailureReason = 'MicrosoftLoginEndpointUnresolved'
+            Write-Warning ("Connect attempt {0} skipped: login.microsoftonline.com could not be resolved. Check DNS, VPN, proxy, or network connectivity before authentication starts." -f $tries)
+            if ($tries -lt $MaxRetries) { Start-Sleep -Seconds ($BackoffSecondsBase * $tries) }
+            continue
+        }
+
         try {
             $swConn = [System.Diagnostics.Stopwatch]::StartNew()
             $usedAppOnly = $false
@@ -1526,6 +1768,7 @@ function Connect-ExchangeOnlineWithRetry {
                 $supportsWebLogin = $paramKeys -contains 'UseWebLogin'
                 $supportsDevice = $paramKeys -contains 'Device'
                 $supportsUseWAM = $paramKeys -contains 'UseWAM'
+                $supportsDisableWAM = $paramKeys -contains 'DisableWAM'
 
                 switch ($authMode) {
                     'WebLogin' {
@@ -1535,8 +1778,12 @@ function Connect-ExchangeOnlineWithRetry {
                         elseif ($supportsDevice) {
                             Connect-ExchangeOnline -Device -ShowBanner:$false -SkipLoadingCmdletHelp:$true -ErrorAction Stop
                         }
+                        elseif ($supportsDisableWAM) {
+                            Connect-ExchangeOnline -DisableWAM -ShowBanner:$false -SkipLoadingCmdletHelp:$true -ErrorAction Stop
+                        }
                         else {
                             # Fallback to WAM/default
+                            Write-Warning 'ExchangeOnlineManagement does not expose UseWebLogin, Device, or DisableWAM. Falling back to WAM/default authentication, which may show a Windows account management prompt.'
                             if ($supportsUseWAM) {
                                 if ($Pref_AuthUseUPNWithWAM -and -not [string]::IsNullOrWhiteSpace($UserPrincipalName)) {
                                     Connect-ExchangeOnline -UseWAM -UserPrincipalName $UserPrincipalName -ShowBanner:$false -SkipLoadingCmdletHelp:$true -ErrorAction Stop
@@ -1562,8 +1809,12 @@ function Connect-ExchangeOnlineWithRetry {
                         elseif ($supportsWebLogin) {
                             Connect-ExchangeOnline -UseWebLogin -ShowBanner:$false -SkipLoadingCmdletHelp:$true -ErrorAction Stop
                         }
+                        elseif ($supportsDisableWAM) {
+                            Connect-ExchangeOnline -DisableWAM -ShowBanner:$false -SkipLoadingCmdletHelp:$true -ErrorAction Stop
+                        }
                         else {
                             # Fallback to default/WAM
+                            Write-Warning 'ExchangeOnlineManagement does not expose Device, UseWebLogin, or DisableWAM. Falling back to WAM/default authentication, which may show a Windows account management prompt.'
                             if ($supportsUseWAM) {
                                 if ($Pref_AuthUseUPNWithWAM -and -not [string]::IsNullOrWhiteSpace($UserPrincipalName)) {
                                     Connect-ExchangeOnline -UseWAM -UserPrincipalName $UserPrincipalName -ShowBanner:$false -SkipLoadingCmdletHelp:$true -ErrorAction Stop
@@ -1608,12 +1859,22 @@ function Connect-ExchangeOnlineWithRetry {
             if ($usedAppOnly) { Write-Verbose ("Connect-ExchangeOnline (app-only) took {0} ms" -f $script:ConnectExchangeMs) }
             else { Write-Verbose ("Connect-ExchangeOnline (user) took {0} ms" -f $script:ConnectExchangeMs) }
             $script:DidConnect = $true
+            $script:ConnectExchangeOnlineFailureReason = ''
             return $true
         }
         catch {
+            if (Test-ExchangeOnlineAuthCancelled -ErrorRecord $_) {
+                $script:ConnectExchangeOnlineFailureReason = 'AuthenticationCancelled'
+                Write-Warning 'Exchange Online authentication was cancelled by the operator or timed out. Stopping without making changes.'
+                return $false
+            }
+
             $tries++
-            Write-Warning ("Connect attempt {0} failed: {1}" -f $tries, $_.Exception.Message)
-            Start-Sleep -Seconds ($BackoffSecondsBase * $tries)
+            $script:ConnectExchangeOnlineFailureReason = 'ConnectionFailed'
+            $errorMessage = Get-ExceptionMessageChain -Exception $_.Exception
+            if ([string]::IsNullOrWhiteSpace($errorMessage)) { $errorMessage = $_.Exception.Message }
+            Write-Warning ("Connect attempt {0} failed: {1}" -f $tries, $errorMessage)
+            if ($tries -lt $MaxRetries) { Start-Sleep -Seconds ($BackoffSecondsBase * $tries) }
         }
     } while ($tries -lt $MaxRetries)
     return $false
@@ -2019,6 +2280,410 @@ function Invoke-OperationWithRetry {
         }
     } while ($tries -lt $MaxRetries)
     throw ("{0} failed after {1} attempts." -f $Label, $MaxRetries)
+}
+
+function Get-QuarantineMessagesPaged {
+    <#
+    .SYNOPSIS
+    Retrieves quarantined messages using consistent paging and retry handling.
+
+    .DESCRIPTION
+    The script needs the same paging semantics before release selection and
+    after release refresh. This helper centralises that fetch path so both views
+    use identical EXO arguments, retry behaviour, and terminating-error rules.
+
+    .PARAMETER StartReceivedDate
+    Lower bound for ReceivedTime.
+
+    .PARAMETER EndReceivedDate
+    Upper bound for ReceivedTime.
+
+    .PARAMETER PageSize
+    Requested EXO page size.
+
+    .PARAMETER QuarantineTypesFilter
+    Optional server-side quarantine type filter.
+
+    .PARAMETER PolicyTypeFilter
+    Optional policy type filter when supported by the module version.
+
+    .PARAMETER MaxRetries
+    Maximum retry attempts for each page request.
+
+    .PARAMETER BackoffSecondsBase
+    Base seconds used to compute retry delays.
+
+    .PARAMETER ActivityLabel
+    Progress label shown while paging.
+
+    .OUTPUTS
+    [object[]] Quarantine messages returned across all pages.
+    #>
+    [CmdletBinding()]
+    [OutputType([object[]])]
+    param(
+        [Parameter(Mandatory)][datetime]$StartReceivedDate,
+        [Parameter(Mandatory)][datetime]$EndReceivedDate,
+        [int]$PageSize = 1000,
+        [string[]]$QuarantineTypesFilter = @(),
+        [string[]]$PolicyTypeFilter = @(),
+        [int]$MaxRetries = 3,
+        [int]$BackoffSecondsBase = 3,
+        [string]$ActivityLabel = 'Quarantine fetch'
+    )
+
+    $queryStartReceivedDate = $StartReceivedDate
+    $queryEndReceivedDate = $EndReceivedDate
+    $queryQuarantineTypesFilter = @($QuarantineTypesFilter)
+    $queryPolicyTypeFilter = @($PolicyTypeFilter)
+
+    $page = 1
+    $allMessages = New-Object System.Collections.Generic.List[object]
+    do {
+        Write-ActivityProgress -Activity $ActivityLabel -Status ("Fetching page {0}" -f $page)
+        $batch = Invoke-OperationWithRetry -Label ("Get-QuarantineMessage page {0}" -f $page) -MaxRetries $MaxRetries -BackoffSecondsBase $BackoffSecondsBase -Operation {
+            $qmArgs = @{ StartReceivedDate = $queryStartReceivedDate; EndReceivedDate = $queryEndReceivedDate; PageSize = $PageSize; Page = $page; ErrorAction = 'Stop' }
+            if ($queryQuarantineTypesFilter.Count -gt 0) { $qmArgs['QuarantineTypes'] = $queryQuarantineTypesFilter }
+            $result = $null
+            if ($queryPolicyTypeFilter.Count -gt 0) {
+                try {
+                    $qmArgs['PolicyTypes'] = $queryPolicyTypeFilter
+                    $result = Get-QuarantineMessage @qmArgs
+                }
+                catch {
+                    $qmArgs.Remove('PolicyTypes')
+                    Write-Verbose ("Get-QuarantineMessage with -PolicyTypes failed, retrying without: {0}" -f $_.Exception.Message)
+                    $result = Get-QuarantineMessage @qmArgs
+                }
+            }
+            else {
+                $result = Get-QuarantineMessage @qmArgs
+            }
+            $result
+        }
+        $batchArray = @($batch)
+        $count = $batchArray.Count
+        if ($count -gt 0) { $allMessages.AddRange($batchArray) }
+        $page++
+    } while ($count -eq $PageSize)
+
+    Write-ActivityProgress -Activity $ActivityLabel -Status 'Completed' -Completed
+    return @($allMessages.ToArray())
+}
+
+function Add-TenantAllowListSender {
+    <#
+    .SYNOPSIS
+    Adds sender entries to the Tenant Allow List with duplicate-safe retries.
+
+    .DESCRIPTION
+    Release-driven allow creation should behave like block creation: retry on
+    transient EXO failures, suppress duplicate-value noise, and honour dry-run
+    semantics consistently.
+
+    .PARAMETER Entries
+    Sender addresses or domains to allow.
+
+    .PARAMETER RemoveAfterDays
+    Optional RemoveAfter value for expiring allow entries.
+
+    .PARAMETER ExpirationDate
+    Optional explicit expiry date.
+
+    .PARAMETER Notes
+    Freeform note attached to the allow entry.
+
+    .PARAMETER MaxRetries
+    Maximum attempts before the helper returns failure.
+
+    .PARAMETER BackoffSecondsBase
+    Base seconds used to compute retry delays.
+
+    .OUTPUTS
+    [pscustomobject] @{ Success = [bool]; Added = [string[]] }
+    #>
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Low')]
+    param(
+        [string[]]$Entries,
+        [Nullable[int]]$RemoveAfterDays,
+        [Nullable[datetime]]$ExpirationDate,
+        [string]$Notes,
+        [int]$MaxRetries = 3,
+        [int]$BackoffSecondsBase = 3
+    )
+
+    if (-not $Entries -or $Entries.Count -eq 0) { return [pscustomobject]@{ Success = $true; Added = @() } }
+
+    $tries = 0
+    do {
+        try {
+            if ($PSCmdlet.ShouldProcess('Tenant Allow List', ("Add entries: {0}" -f ($Entries -join ', ')))) {
+                if ($DryRun) {
+                    return [pscustomobject]@{ Success = $true; Added = @($Entries | ForEach-Object { ConvertTo-NormalizedDomain $_ } | Sort-Object -Unique) }
+                }
+
+                $splat = @{ ListType = 'Sender'; Allow = $true; Entries = $Entries; ErrorAction = 'Stop' }
+                if ($RemoveAfterDays.HasValue) { $splat['RemoveAfter'] = [int]$RemoveAfterDays.Value }
+                if ($ExpirationDate.HasValue) { $splat['ExpirationDate'] = $ExpirationDate.Value }
+                if (-not [string]::IsNullOrWhiteSpace($Notes)) { $splat['Notes'] = $Notes }
+
+                $out = New-TenantAllowBlockListItems @splat
+                $added = @()
+                foreach ($item in @($out)) {
+                    if ($item.PSObject.Properties.Match('Entries').Count -gt 0 -and $item.Entries) { $added += ($item.Entries | Where-Object { $_ }) }
+                    elseif ($item.PSObject.Properties.Match('Entry').Count -gt 0 -and $item.Entry) { $added += $item.Entry }
+                }
+                if ($added.Count -eq 0) {
+                    $added = @($Entries | ForEach-Object { ConvertTo-NormalizedDomain $_ } | Sort-Object -Unique)
+                }
+                else {
+                    $added = @($added | ForEach-Object { ConvertTo-NormalizedDomain $_ } | Sort-Object -Unique)
+                }
+                return [pscustomobject]@{ Success = $true; Added = $added }
+            }
+            return [pscustomobject]@{ Success = $true; Added = @() }
+        }
+        catch {
+            if ($_.Exception.Message -match 'Duplicate value') {
+                Write-Verbose ("Allow entry already exists: {0}" -f ($Entries -join ', '))
+                return [pscustomobject]@{ Success = $true; Added = @($Entries | ForEach-Object { ConvertTo-NormalizedDomain $_ } | Sort-Object -Unique) }
+            }
+            $tries++
+            Write-Warning ("New-TenantAllowBlockListItems attempt {0} failed: {1}" -f $tries, $_.Exception.Message)
+            Start-Sleep -Seconds ($BackoffSecondsBase * $tries)
+        }
+    } while ($tries -lt $MaxRetries)
+
+    return [pscustomobject]@{ Success = $false; Added = @() }
+}
+
+function Invoke-ExportQuarantineMessageSafe {
+    <#
+    .SYNOPSIS
+    Exports a quarantined message using the correct parameter shape for the installed EXO module.
+
+    .DESCRIPTION
+    Export-QuarantineMessage differs across module versions. Some builds omit
+    CompressOutput, others support it, and some require it. This helper checks
+    the command metadata first and then tries a small ordered set of compatible
+    invocations instead of relying on one hard-coded signature.
+
+    .PARAMETER Identity
+    Quarantine message identity to export.
+
+    .PARAMETER ReasonForExport
+    Freeform reason passed to the EXO export cmdlet.
+
+    .OUTPUTS
+    Any. Returns the raw Export-QuarantineMessage result object on success.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Identity,
+        [Parameter()][string]$ReasonForExport
+    )
+
+    $supportsCompressOutput = $false
+    $requiresCompressOutput = $false
+    try {
+        $exportCommand = Get-Command -Name Export-QuarantineMessage -ErrorAction Stop
+        if ($exportCommand.Parameters.ContainsKey('CompressOutput')) {
+            $supportsCompressOutput = $true
+            $parameterAttributes = @($exportCommand.Parameters['CompressOutput'].Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] })
+            if ($parameterAttributes | Where-Object { $_.Mandatory }) { $requiresCompressOutput = $true }
+        }
+    }
+    catch {
+        throw ("Unable to inspect Export-QuarantineMessage parameters: {0}" -f $_.Exception.Message)
+    }
+
+    $attemptSpecs = New-Object System.Collections.Generic.List[hashtable]
+    if ($supportsCompressOutput -and $requiresCompressOutput) {
+        $attemptSpecs.Add(@{ Mode = 'CompressOutputTrue'; Splat = @{ CompressOutput = $true } }) | Out-Null
+    }
+    elseif ($supportsCompressOutput) {
+        $attemptSpecs.Add(@{ Mode = 'CompressOutputFalse'; Splat = @{ CompressOutput = $false } }) | Out-Null
+        $attemptSpecs.Add(@{ Mode = 'NoCompressOutput'; Splat = @{} }) | Out-Null
+        $attemptSpecs.Add(@{ Mode = 'CompressOutputTrue'; Splat = @{ CompressOutput = $true } }) | Out-Null
+    }
+    else {
+        $attemptSpecs.Add(@{ Mode = 'NoCompressOutput'; Splat = @{} }) | Out-Null
+        $attemptSpecs.Add(@{ Mode = 'CompressOutputTrue'; Splat = @{ CompressOutput = $true } }) | Out-Null
+    }
+
+    foreach ($attemptSpec in $attemptSpecs) {
+        $splat = @{ Identity = $Identity; ReasonForExport = $ReasonForExport; ForceConversionToMime = $true; ErrorAction = 'Stop' }
+        foreach ($key in $attemptSpec.Splat.Keys) { $splat[$key] = $attemptSpec.Splat[$key] }
+        try {
+            return Export-QuarantineMessage @splat
+        }
+        catch [System.Management.Automation.ParameterBindingException] {
+            Write-Verbose ("Export-QuarantineMessage mode {0} was not accepted for {1}: {2}" -f $attemptSpec.Mode, $Identity, $_.Exception.Message)
+            continue
+        }
+        catch {
+            $exportError = $_.Exception.Message
+            if ($exportError -match 'missing mandatory parameters?:\s*CompressOutput' -or $exportError -match 'parameter cannot be found.*CompressOutput') {
+                Write-Verbose ("Export-QuarantineMessage mode {0} failed due to CompressOutput binding for {1}: {2}" -f $attemptSpec.Mode, $Identity, $exportError)
+                continue
+            }
+            throw
+        }
+    }
+
+    throw ("Export-QuarantineMessage could not find a supported parameter combination for identity {0}." -f $Identity)
+}
+
+function Get-HeaderFetchBatch {
+    <#
+    .SYNOPSIS
+    Retrieves message headers using serial mode or a guarded parallel prototype.
+
+    .DESCRIPTION
+    Header retrieval is the slowest read-heavy part of the workflow. This helper
+    attempts a bounded thread-job prototype when requested, but falls back to the
+    serial EXO path immediately if the environment cannot resolve or execute the
+    remote header cmdlet in worker runspaces.
+
+    .PARAMETER Messages
+    Messages whose headers should be retrieved.
+
+    .PARAMETER ActivityLabel
+    Progress label shown while fetching.
+
+    .PARAMETER MaxRetries
+    Maximum retry attempts for serial mode.
+
+    .PARAMETER BackoffSecondsBase
+    Base seconds used to compute retry delays in serial mode.
+
+    .OUTPUTS
+    [pscustomobject[]] Objects with Message, Success, HeaderText, and Error.
+    #>
+    [CmdletBinding()]
+    [OutputType([object[]])]
+    param(
+        [Parameter()][AllowEmptyCollection()][object[]]$Messages,
+        [string]$ActivityLabel = 'Header analysis',
+        [int]$MaxRetries = 3,
+        [int]$BackoffSecondsBase = 3
+    )
+
+    $messageArray = @($Messages)
+    if ($messageArray.Count -eq 0) { return @() }
+
+    $mode = if ($Pref_HeaderAnalysisMode) { $Pref_HeaderAnalysisMode } else { 'ParallelAuto' }
+    $results = New-Object System.Collections.Generic.List[object]
+
+    if ($mode -eq 'ParallelAuto' -and -not $script:HeaderParallelCapabilityDetermined) {
+        $script:HeaderParallelCapability = $false
+        try {
+            $threadJobCmd = Get-Command -Name Start-ThreadJob -ErrorAction SilentlyContinue
+            if ($threadJobCmd) {
+                $probeIdentity = $null
+                try { $probeIdentity = $messageArray[0].Identity.ToString() } catch { $probeIdentity = $null }
+                if ($probeIdentity) {
+                    $probeJob = Start-ThreadJob -ScriptBlock {
+                        try {
+                            $header = Get-QuarantineMessageHeader -Identity $using:probeIdentity -ErrorAction Stop
+                            [pscustomobject]@{ Success = $true; Identity = $using:probeIdentity; HeaderText = $header; Error = $null }
+                        }
+                        catch {
+                            [pscustomobject]@{ Success = $false; Identity = $using:probeIdentity; HeaderText = $null; Error = $_.Exception.Message }
+                        }
+                    }
+                    try {
+                        Wait-Job -Job $probeJob -Timeout 45 | Out-Null
+                        $probeOutput = Receive-Job -Job $probeJob -ErrorAction SilentlyContinue
+                        if ($probeOutput -and $probeOutput.Success) {
+                            $script:HeaderParallelCapability = $true
+                            $results.Add([pscustomobject]@{ Message = $messageArray[0]; Success = $true; HeaderText = $probeOutput.HeaderText; Error = $null }) | Out-Null
+                            if ($messageArray.Count -gt 1) {
+                                $messageArray = @($messageArray | Select-Object -Skip 1)
+                            }
+                            else {
+                                $messageArray = @()
+                            }
+                        }
+                        else {
+                            Write-Verbose ("Parallel header probe failed; falling back to serial mode. {0}" -f $probeOutput.Error)
+                        }
+                    }
+                    finally {
+                        Remove-Job -Job $probeJob -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Verbose ("Parallel header probe setup failed; falling back to serial mode. {0}" -f $_.Exception.Message)
+        }
+        $script:HeaderParallelCapabilityDetermined = $true
+    }
+
+    if ($mode -eq 'ParallelAuto' -and $script:HeaderParallelCapability -and $messageArray.Count -gt 0) {
+        $throttle = [Math]::Max(1, [Math]::Min($Pref_HeaderParallelThrottle, $messageArray.Count))
+        $queue = New-Object System.Collections.Generic.Queue[object]
+        foreach ($message in $messageArray) { $queue.Enqueue($message) }
+        $jobs = New-Object System.Collections.Generic.List[object]
+        $completedCount = $results.Count
+        $totalCount = $results.Count + $messageArray.Count
+
+        while ($queue.Count -gt 0 -or $jobs.Count -gt 0) {
+            while ($queue.Count -gt 0 -and $jobs.Count -lt $throttle) {
+                $message = $queue.Dequeue()
+                $jobIdentity = $message.Identity.ToString()
+                $job = Start-ThreadJob -ScriptBlock {
+                    try {
+                        $header = Get-QuarantineMessageHeader -Identity $using:jobIdentity -ErrorAction Stop
+                        [pscustomobject]@{ Success = $true; Identity = $using:jobIdentity; HeaderText = $header; Error = $null }
+                    }
+                    catch {
+                        [pscustomobject]@{ Success = $false; Identity = $using:jobIdentity; HeaderText = $null; Error = $_.Exception.Message }
+                    }
+                }
+                $jobs.Add([pscustomobject]@{ Job = $job; Message = $message }) | Out-Null
+            }
+
+            if ($jobs.Count -eq 0) { continue }
+
+            $completedJob = Wait-Job -Job ($jobs | ForEach-Object { $_.Job }) -Any
+            if (-not $completedJob) { break }
+            $jobEntry = $jobs | Where-Object { $_.Job.Id -eq $completedJob.Id } | Select-Object -First 1
+            $jobOutput = $null
+            try { $jobOutput = Receive-Job -Job $completedJob -ErrorAction SilentlyContinue }
+            finally {
+                Remove-Job -Job $completedJob -Force -ErrorAction SilentlyContinue
+                $jobs = New-Object System.Collections.Generic.List[object] (@($jobs | Where-Object { $_.Job.Id -ne $completedJob.Id }))
+            }
+
+            $completedCount++
+            Write-ActivityProgress -Activity $ActivityLabel -Status ("Analysing {0}/{1}: {2}" -f $completedCount, $totalCount, $jobEntry.Message.Identity) -Current $completedCount -Total $totalCount
+
+            if ($jobOutput) {
+                $results.Add([pscustomobject]@{ Message = $jobEntry.Message; Success = [bool]$jobOutput.Success; HeaderText = $jobOutput.HeaderText; Error = $jobOutput.Error }) | Out-Null
+            }
+            else {
+                $results.Add([pscustomobject]@{ Message = $jobEntry.Message; Success = $false; HeaderText = $null; Error = 'No header output returned from worker.' }) | Out-Null
+            }
+        }
+
+        return @($results.ToArray())
+    }
+
+    foreach ($message in $messageArray) {
+        try {
+            $headerText = Invoke-OperationWithRetry -Label "Get-QuarantineMessageHeader" -MaxRetries $MaxRetries -BackoffSecondsBase $BackoffSecondsBase -Operation {
+                Get-QuarantineMessageHeader -Identity $message.Identity -ErrorAction Stop
+            }
+            $results.Add([pscustomobject]@{ Message = $message; Success = $true; HeaderText = $headerText; Error = $null }) | Out-Null
+        }
+        catch {
+            $results.Add([pscustomobject]@{ Message = $message; Success = $false; HeaderText = $null; Error = $_.Exception.Message }) | Out-Null
+        }
+    }
+
+    return @($results.ToArray())
 }
 
 # ---------------------------
@@ -2439,7 +3104,8 @@ function Invoke-DeleteQuarantineMessage {
     param(
         [Parameter()][AllowEmptyCollection()][object[]]$Messages,
         [ValidateSet('Yes', 'No', 'List', 'Permanent')][string]$Mode = 'List',
-        [Parameter()][string[]]$SelectedDomains = @()
+        [Parameter()][string[]]$SelectedDomains = @(),
+        [Parameter()][hashtable]$OriginAnalysisCache = @{}
     )
 
     $deleted = 0; $failed = 0
@@ -2451,7 +3117,15 @@ function Invoke-DeleteQuarantineMessage {
         param($items, [switch]$Hard)
         $useHardDelete = [bool]$Hard
         $localDeleted = 0; $localFailed = 0
+        $itemsToDelete = @($items)
+        $deleteModeLabel = if ($useHardDelete) { 'hard delete' } else { 'soft delete' }
+        if ($itemsToDelete.Count -gt 0) {
+            Write-ConsoleMessage ("Deleting {0} selected quarantine message(s) using {1}..." -f $itemsToDelete.Count, $deleteModeLabel) -ForegroundColor Cyan
+        }
+        $deleteIndex = 0
         foreach ($m in $items) {
+            $deleteIndex++
+            Write-ActivityProgress -Activity 'Quarantine deletion' -Status ("Deleting {0}/{1}: {2}" -f $deleteIndex, $itemsToDelete.Count, $m.Identity) -Current $deleteIndex -Total $itemsToDelete.Count
             try {
                 Invoke-OperationWithRetry -Label ("Delete-QuarantineMessage:{0}" -f $m.Identity) -MaxRetries 3 -BackoffSecondsBase 2 -Operation {
                     if ($useHardDelete) { Delete-QuarantineMessage -Identity $m.Identity -HardDelete -Confirm:$false -ErrorAction Stop }
@@ -2463,6 +3137,9 @@ function Invoke-DeleteQuarantineMessage {
                 $localFailed++
                 Write-Warning ("Failed to delete {0}: {1}" -f $m.Identity, $_.Exception.Message)
             }
+        }
+        if ($itemsToDelete.Count -gt 0) {
+            Write-ActivityProgress -Activity 'Quarantine deletion' -Status 'Completed' -Current $itemsToDelete.Count -Total $itemsToDelete.Count -Completed
         }
         [pscustomobject]@{ Deleted = $localDeleted; Failed = $localFailed }
     }
@@ -2495,15 +3172,35 @@ function Invoke-DeleteQuarantineMessage {
         if ($SelectedDomains -and $SelectedDomains.Count -gt 0) { $rootsToMatch = $SelectedDomains | ForEach-Object { Get-ETLDPlusOne $_ } | Select-Object -Unique }
 
         $toShow = @()
+        Write-ConsoleMessage ("Preparing delete selection list for {0} analysed message(s)..." -f $Messages.Count) -ForegroundColor Cyan
         if ($rootsToMatch.Count -gt 0) {
+            $matchIndex = 0
+            $matchTotal = $Messages.Count
             foreach ($m in $Messages) {
+                $matchIndex++
+                Write-ActivityProgress -Activity 'Delete list preparation' -Status ("Matching {0}/{1}: {2}" -f $matchIndex, $matchTotal, $m.Identity) -Current $matchIndex -Total $matchTotal
                 $bestRoot = $null
                 $senderRoot = $null
+                $origin = $null
                 try {
                     if ($m.SenderAddress) { $senderRoot = Get-ETLDPlusOne (ConvertTo-NormalizedAddress $m.SenderAddress) }
-                    $headerText = Get-QuarantineMessageHeader -Identity $m.Identity -ErrorAction Stop
-                    $origin = Get-MessageOriginAnalysis -Message $m -HeaderText $headerText
-                    foreach ($candidate in $origin.PreferredRoots) { if ($candidate) { $bestRoot = $candidate; break } }
+                    $cacheKey = $null
+                    try { $cacheKey = $m.Identity.ToString() } catch { $cacheKey = $null }
+                    if ($cacheKey -and $OriginAnalysisCache.ContainsKey($cacheKey)) {
+                        $origin = $OriginAnalysisCache[$cacheKey]
+                    }
+                    if (-not $origin -and $Pref_DeleteListResolutionMode -ne 'CachedOnly') {
+                        $headerText = Get-QuarantineMessageHeader -Identity $m.Identity -ErrorAction Stop
+                        $origin = Get-MessageOriginAnalysis -Message $m -HeaderText $headerText
+                        if ($cacheKey) { $OriginAnalysisCache[$cacheKey] = $origin }
+                    }
+                    if ($origin) {
+                        foreach ($candidate in $origin.PreferredRoots) { if ($candidate) { $bestRoot = $candidate; break } }
+                        if (-not $bestRoot -and $origin.SenderRoot) { $bestRoot = $origin.SenderRoot }
+                    }
+                    elseif ($senderRoot) {
+                        $bestRoot = $senderRoot
+                    }
                 }
                 catch {
                     Write-Verbose ("Delete list origin parsing failed for {0}: {1}" -f $m.Identity, $_.Exception.Message)
@@ -2511,16 +3208,19 @@ function Invoke-DeleteQuarantineMessage {
                 }
                 if ($bestRoot -and ($rootsToMatch -contains $bestRoot)) { $toShow += $m }
             }
+            Write-ActivityProgress -Activity 'Delete list preparation' -Status 'Completed' -Current $matchTotal -Total $matchTotal -Completed
         }
         else { $toShow = $Messages }
 
         if (-not $toShow -or $toShow.Count -eq 0) { Write-ConsoleMessage 'List mode skipped: no messages match selected block domains.' -ForegroundColor Yellow; return [pscustomobject]@{ Deleted = 0; Failed = 0; Mode = $Mode } }
 
         $rows = $toShow | ForEach-Object { Get-QuarantineMessageDisplayRow -Message $_ }
+        Write-ConsoleMessage ("Delete selection list ready: {0} message(s) match the selected block domains." -f $rows.Count) -ForegroundColor Cyan
         Write-ConsoleMessage "List mode: In Out-GridView, press Ctrl+A to select all, then Ctrl-click to unselect items to keep." -ForegroundColor Yellow
         $selectedRows = @()
         $gridFailed = -not (Test-OutGridViewAvailable)
         if (-not $gridFailed) {
+            Write-ConsoleMessage 'Opening delete selection grid... Switch to the Out-GridView window to choose messages to delete.' -ForegroundColor Yellow
             try { $selectedRows = @($rows | Out-GridView -PassThru -Title 'Select messages to DELETE from quarantine') }
             catch {
                 $gridFailed = $true
@@ -2545,6 +3245,7 @@ function Invoke-DeleteQuarantineMessage {
             }
         }
         if ($selectedRows -and $selectedRows.Count -gt 0) {
+            Write-ConsoleMessage ("Delete selection complete. Processing {0} selected message(s)..." -f $selectedRows.Count) -ForegroundColor Cyan
             $idsToDelete = $selectedRows | Select-Object -ExpandProperty Identity
             $map = @{}
             foreach ($m in $toShow) { $map[$m.Identity.ToString()] = $m }
@@ -2552,6 +3253,9 @@ function Invoke-DeleteQuarantineMessage {
             foreach ($id in $idsToDelete) { if ($map.ContainsKey($id.ToString())) { $toDelete += $map[$id.ToString()] } }
             $res2 = & $performDeletes $toDelete
             $deleted += $res2.Deleted; $failed += $res2.Failed
+        }
+        else {
+            Write-ConsoleMessage 'Delete selection cancelled or none selected; continuing without deletion.' -ForegroundColor Yellow
         }
     }
 
@@ -2611,6 +3315,157 @@ function Get-ReleaseDisplayRow {
         Received  = $received
         Original  = $Message
     }
+}
+
+function Test-QuarantineMessageReleased {
+    <#
+        .SYNOPSIS
+        Determines whether a quarantine item has already been released.
+
+        .DESCRIPTION
+        Exchange Online can return release state through different properties
+        across module versions. This helper centralises the defensive checks so
+        already-released messages are not offered for release again and warning-
+        only service responses do not get counted as fresh release actions.
+
+        .PARAMETER Message
+        Quarantine message object returned by Get-QuarantineMessage.
+
+        .OUTPUTS
+        [bool] True when the message appears to have been released already.
+        #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory)][object]$Message)
+
+    foreach ($propertyName in @('ReleaseStatus', 'Status')) {
+        if (-not $Message.PSObject.Properties[$propertyName]) { continue }
+        $statusValues = @($Message.$propertyName | Where-Object { $null -ne $_ } | ForEach-Object { $_.ToString() })
+        foreach ($statusValue in $statusValues) {
+            if ([string]::IsNullOrWhiteSpace($statusValue)) { continue }
+            if ($statusValue -match '(?i)not\s*released|notreleased|not\s+yet\s+released') { continue }
+            if ($statusValue -match '(?i)released') { return $true }
+        }
+    }
+
+    foreach ($propertyName in @('Released', 'ReleasedToAll', 'ReleasedTime', 'ReleaseTime', 'ReleasedBy', 'ReleasedUser', 'ReleasedUsers', 'ReleasedTo', 'ReleasedRecipients')) {
+        if (-not $Message.PSObject.Properties[$propertyName]) { continue }
+        $value = $Message.$propertyName
+        if ($null -eq $value) { continue }
+        if ($value -is [bool]) { if ($value) { return $true } else { continue } }
+        if ($value -is [System.Collections.IEnumerable] -and $value -isnot [string]) {
+            if (@($value).Count -gt 0) { return $true }
+            continue
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$value)) { return $true }
+    }
+
+    return $false
+}
+
+function Test-QuarantineMessageFalsePositiveReportable {
+    <#
+        .SYNOPSIS
+        Determines whether Microsoft false-positive reporting is supported for a quarantine item.
+
+        .DESCRIPTION
+        Exchange Online rejects false-positive reporting for transport-rule
+        quarantines. This helper detects those items before the report call so
+        the release workflow does not emit avoidable warnings after a successful
+        release.
+
+        .PARAMETER Message
+        Quarantine message object returned by Get-QuarantineMessage.
+
+        .OUTPUTS
+        [bool] True when the item should be eligible for false-positive reporting.
+        #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory)][object]$Message)
+
+    $reasonText = ''
+    foreach ($propertyName in @('QuarantineReason', 'Reason', 'QuarantineTypes', 'QuarantineType', 'PolicyType', 'Policy')) {
+        if (-not $Message.PSObject.Properties[$propertyName]) { continue }
+        $value = $Message.$propertyName
+        if ($value -is [System.Collections.IEnumerable] -and $value -isnot [string]) { $reasonText += ' ' + (@($value) -join ' ') }
+        elseif ($value) { $reasonText += ' ' + [string]$value }
+    }
+
+    return ($reasonText -notmatch '(?i)transport\s+rule')
+}
+
+function Invoke-QuarantineReleaseAction {
+    <#
+        .SYNOPSIS
+        Runs a release action with retry handling and warning classification.
+
+        .DESCRIPTION
+        Release-QuarantineMessage can report already-released items as warning
+        output rather than terminating errors. Generic retry handling cannot
+        reliably classify that warning stream, so this helper captures stream 3
+        directly and returns an explicit status for the release workflow.
+
+        .PARAMETER ReleaseParameters
+        Splat passed to Release-QuarantineMessage.
+
+        .PARAMETER Label
+        Friendly operation label used in warnings.
+
+        .PARAMETER MaxRetries
+        Maximum attempts before returning failure.
+
+        .PARAMETER BackoffSecondsBase
+        Base seconds used to calculate retry delay.
+
+        .OUTPUTS
+        [pscustomobject] Success, AlreadyReleased, WarningText, and Error.
+        #>
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)][hashtable]$ReleaseParameters,
+        [string]$Label = 'Release-QuarantineMessage',
+        [int]$MaxRetries = 3,
+        [int]$BackoffSecondsBase = 3
+    )
+
+    $tries = 0
+    do {
+        try {
+            $releaseParameterSet = $ReleaseParameters.Clone()
+            $q2bReleaseWarnings = @()
+            $releaseParameterSet['WarningVariable'] = 'q2bReleaseWarnings'
+            $releaseParameterSet['WarningAction'] = 'SilentlyContinue'
+            $streamOutput = @(Release-QuarantineMessage @releaseParameterSet 3>&1)
+            $warningRecords = @($streamOutput | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
+            $warningMessages = New-Object System.Collections.Generic.List[string]
+            foreach ($capturedWarning in @($q2bReleaseWarnings)) {
+                if ($capturedWarning -is [System.Management.Automation.WarningRecord]) { $warningMessages.Add($capturedWarning.Message) }
+                elseif (-not [string]::IsNullOrWhiteSpace([string]$capturedWarning)) { $warningMessages.Add([string]$capturedWarning) }
+            }
+            foreach ($warningRecord in $warningRecords) { $warningMessages.Add($warningRecord.Message) }
+            $warningText = (@($warningMessages) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique) -join ' '
+
+            if ($warningText -match '(?i)previously released|can''t be\s+released|cannot be\s+released') {
+                return [pscustomobject]@{ Success = $false; AlreadyReleased = $true; WarningText = $warningText; Error = $null }
+            }
+
+            foreach ($warningMessage in (@($warningMessages) | Select-Object -Unique)) {
+                Write-Warning $warningMessage
+            }
+
+            return [pscustomobject]@{ Success = $true; AlreadyReleased = $false; WarningText = $warningText; Error = $null }
+        }
+        catch {
+            $tries++
+            $errorMessage = $_.Exception.Message
+            Write-Warning ("{0} attempt {1} failed: {2}" -f $Label, $tries, $errorMessage)
+            if ($tries -lt $MaxRetries) { Start-Sleep -Seconds ($BackoffSecondsBase * $tries) }
+        }
+    } while ($tries -lt $MaxRetries)
+
+    return [pscustomobject]@{ Success = $false; AlreadyReleased = $false; WarningText = ''; Error = ("{0} failed after {1} attempts." -f $Label, $MaxRetries) }
 }
 
 function Get-ReleaseOptionsForMessage {
@@ -2787,30 +3642,29 @@ function Invoke-QuarantineReleaseWorkflow {
         [int]$BackoffSecondsBase = 3
     )
 
-    if (-not $Messages -or $Messages.Count -le 0) { return [pscustomobject]@{ Released = 0; Allowed = 0; DeletedSoft = 0; DeletedHard = 0 } }
+    if (-not $Messages -or $Messages.Count -le 0) { return [pscustomobject]@{ Selected = 0; Released = 0; AlreadyReleased = 0; Failed = 0; Allowed = 0; DeletedSoft = 0; DeletedHard = 0; ReleasedIdentities = @(); ReleasedRoots = @() } }
 
     # Filter out any messages already released before presenting the grid
     $messagesToShow = @()
+    $preSkippedAlreadyReleased = 0
     foreach ($m in $Messages) {
-        $isReleased = $false
-        try {
-            if ($m.PSObject.Properties['ReleaseStatus']) { $isReleased = ($m.ReleaseStatus -match '^Released$') }
-            elseif ($m.PSObject.Properties['Status']) { $isReleased = ($m.Status -match '^Released$') }
-        }
-        catch { $isReleased = $false }
-        if (-not $isReleased) { $messagesToShow += $m }
+        if (Test-QuarantineMessageReleased -Message $m) { $preSkippedAlreadyReleased++ }
+        else { $messagesToShow += $m }
     }
-    if (-not $messagesToShow -or $messagesToShow.Count -eq 0) { return [pscustomobject]@{ Released = 0; Allowed = 0; DeletedSoft = 0; DeletedHard = 0 } }
+    if ($preSkippedAlreadyReleased -gt 0) { Write-ConsoleMessage ("Release stage skipped {0} message(s) that were already released before selection." -f $preSkippedAlreadyReleased) -ForegroundColor Yellow }
+    if (-not $messagesToShow -or $messagesToShow.Count -eq 0) { return [pscustomobject]@{ Selected = 0; Released = 0; AlreadyReleased = $preSkippedAlreadyReleased; Failed = 0; Allowed = 0; DeletedSoft = 0; DeletedHard = 0; ReleasedIdentities = @(); ReleasedRoots = @() } }
 
     if ($DryRun) { Write-ConsoleMessage '[DryRun] Release workflow is simulation-only; no EXO changes will be made.' -ForegroundColor Yellow }
 
     # Build a simple array of display rows to avoid generic List type issues
     $rows = @()
     foreach ($m in $messagesToShow) { $rows += (Get-ReleaseDisplayRow -Message $m) }
+    Write-ConsoleMessage ("Release stage ready: {0} message(s) are available for release selection." -f $rows.Count) -ForegroundColor Cyan
 
     $selected = @()
     $gridFailed = $false
     if (Test-OutGridViewAvailable) {
+        Write-ConsoleMessage 'Opening release selection grid... Switch to the Out-GridView window to choose messages to release.' -ForegroundColor Yellow
         try { $selected = $rows | Out-GridView -Title 'Select messages to release' -PassThru } catch { $gridFailed = $true }
     }
     else { $gridFailed = $true }
@@ -2834,18 +3688,27 @@ function Invoke-QuarantineReleaseWorkflow {
 
     if (-not $selected -or $selected.Count -eq 0) {
         Write-ConsoleMessage 'Release selection cancelled or none selected; continuing without releases.' -ForegroundColor Yellow
-        return [pscustomobject]@{ Released = 0; Allowed = 0; DeletedSoft = 0; DeletedHard = 0 }
+        return [pscustomobject]@{ Selected = 0; Released = 0; AlreadyReleased = $preSkippedAlreadyReleased; Failed = 0; Allowed = 0; DeletedSoft = 0; DeletedHard = 0; ReleasedIdentities = @(); ReleasedRoots = @() }
     }
 
-    $released = 0; $allowed = 0; $delSoft = 0; $delHard = 0
+    Write-ConsoleMessage ("Release selection complete. Processing {0} selected message(s)..." -f $selected.Count) -ForegroundColor Cyan
+
+    $released = 0; $alreadyReleased = $preSkippedAlreadyReleased; $releaseFailed = 0; $allowed = 0; $delSoft = 0; $delHard = 0
     # Cache release options by sender root to avoid repeated prompts
     $releaseOptionCache = @{}
     # Track allow entries added in this run to avoid duplicate New-TenantAllowBlockListItems calls
     $allowEntriesSeen = New-Object 'System.Collections.Generic.HashSet[string]'
+    $releasedIdentities = New-Object 'System.Collections.Generic.HashSet[string]'
+    $releasedRoots = New-Object 'System.Collections.Generic.HashSet[string]'
+    $releaseIndex = 0
+    $releaseTotal = $selected.Count
     foreach ($row in $selected) {
+        $releaseIndex++
         $senderEmailForKey = ConvertTo-NormalizedAddress $row.Sender
         $senderRootKey = $null
         try { if ($senderEmailForKey) { $senderRootKey = Get-ETLDPlusOne (ConvertTo-NormalizedDomain $senderEmailForKey) } } catch { $senderRootKey = $null }
+        $progressLabel = if ($row.Sender) { $row.Sender } elseif ($row.Subject) { $row.Subject } else { $row.Identity }
+        Write-ActivityProgress -Activity 'Release workflow' -Status ("Processing {0}/{1}: {2}" -f $releaseIndex, $releaseTotal, $progressLabel) -Current $releaseIndex -Total $releaseTotal
 
         $opts = $null
         if ($senderRootKey -and $releaseOptionCache.ContainsKey($senderRootKey)) {
@@ -2856,17 +3719,67 @@ function Invoke-QuarantineReleaseWorkflow {
             if ($senderRootKey) { $releaseOptionCache[$senderRootKey] = $opts }
         }
         $msg = $row.Original
+        if (Test-QuarantineMessageReleased -Message $msg) {
+            $alreadyReleased++
+            if ($msg.Identity) { $releasedIdentities.Add($msg.Identity.ToString()) | Out-Null }
+            if ($senderRootKey) { $releasedRoots.Add($senderRootKey) | Out-Null }
+            Write-Verbose ("Skipping already released quarantine message before release call: {0}" -f $msg.Identity)
+            continue
+        }
 
-        $relParams = @{ Identity = $msg.Identity; Confirm = $false }
+        $relParams = @{ Identity = $msg.Identity; Confirm = $false; ErrorAction = 'Stop' }
         if ($opts.ReleaseToAll) { $relParams['ReleaseToAll'] = $true } else { $relParams['User'] = @($msg.RecipientAddress) }
-        if ($opts.ReportFalsePositive) { $relParams['ReportFalsePositive'] = $true }
         if ($opts.AllowSender) { $relParams['AllowSender'] = $true }
 
+        $releaseSucceeded = $false
         if (-not $DryRun) {
-            Invoke-OperationWithRetry -Operation { Release-QuarantineMessage @relParams } -Label ('Release {0}' -f $msg.Identity) -MaxRetries $MaxRetries -BackoffSecondsBase $BackoffSecondsBase | Out-Null
+            $releaseResult = Invoke-QuarantineReleaseAction -ReleaseParameters $relParams -Label ('Release {0}' -f $msg.Identity) -MaxRetries $MaxRetries -BackoffSecondsBase $BackoffSecondsBase
+            if ($releaseResult.AlreadyReleased) {
+                $alreadyReleased++
+                if ($msg.Identity) { $releasedIdentities.Add($msg.Identity.ToString()) | Out-Null }
+                if ($senderRootKey) { $releasedRoots.Add($senderRootKey) | Out-Null }
+                Write-Verbose ("Exchange Online reported already released during release call for {0}: {1}" -f $msg.Identity, $releaseResult.WarningText)
+                continue
+            }
+            if ($releaseResult.Success) {
+                $releaseSucceeded = $true
+            }
+            else {
+                $releaseFailed++
+                Write-Warning ("Release failed for {0}: {1}" -f $msg.Identity, $releaseResult.Error)
+                continue
+            }
         }
-        else { Write-ConsoleMessage ("[DryRun] Would release {0}" -f $msg.Identity) -ForegroundColor DarkYellow }
+        else {
+            Write-ConsoleMessage ("[DryRun] Would release {0}" -f $msg.Identity) -ForegroundColor DarkYellow
+            $releaseSucceeded = $true
+        }
+        if (-not $releaseSucceeded) { continue }
+
         $released++
+        try {
+            if (-not $DryRun) {
+                if ($msg.PSObject.Properties['ReleaseStatus']) { $msg.ReleaseStatus = 'Released' }
+                else { $msg | Add-Member -NotePropertyName ReleaseStatus -NotePropertyValue 'Released' -Force }
+            }
+        }
+        catch { Write-Verbose ("Failed to stamp ReleaseStatus for {0}: {1}" -f $msg.Identity, $_.Exception.Message) }
+        if ($msg.Identity) { $releasedIdentities.Add($msg.Identity.ToString()) | Out-Null }
+        if ($senderRootKey) { $releasedRoots.Add($senderRootKey) | Out-Null }
+
+        if ($opts.ReportFalsePositive -and (Test-QuarantineMessageFalsePositiveReportable -Message $msg)) {
+            $reportParams = @{ Identity = $msg.Identity; Confirm = $false; ReportFalsePositive = $true; ErrorAction = 'Stop' }
+            if ($opts.ReleaseToAll) { $reportParams['ReleaseToAll'] = $true } else { $reportParams['User'] = @($msg.RecipientAddress) }
+            try {
+                Invoke-OperationWithRetry -Operation { Release-QuarantineMessage @reportParams } -Label ('ReportFalsePositive {0}' -f $msg.Identity) -MaxRetries ([math]::Min(2, $MaxRetries)) -BackoffSecondsBase $BackoffSecondsBase | Out-Null
+            }
+            catch {
+                Write-Warning ("False-positive reporting failed for {0}, but the release succeeded: {1}" -f $msg.Identity, $_.Exception.Message)
+            }
+        }
+        elseif ($opts.ReportFalsePositive) {
+            Write-Verbose ("Skipping false-positive report for transport-rule quarantined message {0}." -f $msg.Identity)
+        }
 
         if ($opts.CreateAllow) {
             # Derive entry value from sender email; never pass raw address to domain resolution
@@ -2883,8 +3796,14 @@ function Invoke-QuarantineReleaseWorkflow {
             if ($null -ne $opts.ExpirationDate) { $allowParams['ExpirationDate'] = $opts.ExpirationDate }
             if (-not [string]::IsNullOrWhiteSpace($opts.AllowNote)) { $allowParams['Notes'] = $opts.AllowNote }
             if (-not $DryRun) {
-                try { New-TenantAllowBlockListItems @allowParams | Out-Null; $allowed++; $allowEntriesSeen.Add($entryValue) | Out-Null }
-                catch { Write-ConsoleMessage ("Allow entry failed for {0}: {1}" -f $entryValue, $_.Exception.Message) -ForegroundColor Yellow }
+                $allowResult = Add-TenantAllowListSender -Entries @($entryValue) -RemoveAfterDays $opts.RemoveAfterDays -ExpirationDate $opts.ExpirationDate -Notes $opts.AllowNote -MaxRetries $MaxRetries -BackoffSecondsBase $BackoffSecondsBase
+                if ($allowResult.Success) {
+                    $allowed++
+                    $allowEntriesSeen.Add($entryValue) | Out-Null
+                }
+                else {
+                    Write-ConsoleMessage ("Allow entry failed for {0}." -f $entryValue) -ForegroundColor Yellow
+                }
             }
             else { Write-ConsoleMessage ("[DryRun] Would allow {0} (scope={1})" -f $entryValue, $opts.AllowScope) -ForegroundColor DarkYellow; $allowed++; $allowEntriesSeen.Add($entryValue) | Out-Null }
         }
@@ -2895,7 +3814,10 @@ function Invoke-QuarantineReleaseWorkflow {
         }
     }
 
-    [pscustomobject]@{ Released = $released; Allowed = $allowed; DeletedSoft = $delSoft; DeletedHard = $delHard }
+    Write-ActivityProgress -Activity 'Release workflow' -Status 'Completed' -Current $releaseTotal -Total $releaseTotal -Completed
+    Write-ConsoleMessage 'Release processing complete. Refreshing remaining message set before block analysis...' -ForegroundColor Cyan
+
+    [pscustomobject]@{ Selected = $selected.Count; Released = $released; AlreadyReleased = $alreadyReleased; Failed = $releaseFailed; Allowed = $allowed; DeletedSoft = $delSoft; DeletedHard = $delHard; ReleasedIdentities = @($releasedIdentities | Sort-Object -Unique); ReleasedRoots = @($releasedRoots | Sort-Object -Unique) }
 }
 
 # ---------------------------
@@ -3153,10 +4075,15 @@ function Add-TenantBlockListSender {
             }
         }
         catch {
-            if ($_.Exception.Message -match "Duplicate value") {
-                # Already present; treat as success quietly to avoid redundant noise
+            if ($_.Exception.Message -match '(?i)Duplicate value') {
+                if (@($Domains).Count -gt 1) {
+                    Write-Verbose ("Batch contained a duplicate entry; falling back to individual TABL adds: {0}" -f ($Domains -join ', '))
+                    return [pscustomobject]@{ Success = $false; Added = @() }
+                }
+
+                # Already present; treat a single-domain add as idempotent success.
                 Write-Verbose ("Duplicate detected, already present: {0}" -f ($Domains -join ', '))
-                return [pscustomobject]@{ Success = $true; Added = @() }
+                return [pscustomobject]@{ Success = $true; Added = @($Domains | ForEach-Object { ConvertTo-NormalizedDomain $_ } | Sort-Object -Unique) }
             }
             $tries++
             Write-Warning ("New-TenantAllowBlockListItems batch attempt {0} failed: {1}" -f $tries, $_.Exception.Message)
@@ -3166,10 +4093,155 @@ function Add-TenantBlockListSender {
     return [pscustomobject]@{ Success = $false; Added = @() }
 }
 
+function Get-BlockCandidateList {
+    <#
+    .SYNOPSIS
+    Filters discovered domains into the final block candidate list.
+
+    .DESCRIPTION
+    Candidate selection must exclude domains that are already blocked and
+    domains whose sender roots were released earlier in the same run. This
+    helper centralises that final filtering so the behaviour is consistent and
+    regression-testable.
+
+    .PARAMETER DiscoveredDomains
+    Domains discovered during message-origin analysis.
+
+    .PARAMETER BlockedExact
+    Existing exact TABL entries.
+
+    .PARAMETER BlockedRoots
+    Existing root TABL entries.
+
+    .PARAMETER ReleasedRoots
+    Sender roots released earlier in the current run.
+
+    .OUTPUTS
+    [string[]] Unique domains eligible to be shown as block candidates.
+    #>
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [Parameter()][AllowEmptyCollection()][string[]]$DiscoveredDomains,
+        [Parameter()][string[]]$BlockedExact = @(),
+        [Parameter()][string[]]$BlockedRoots = @(),
+        [Parameter()][string[]]$ReleasedRoots = @()
+    )
+
+    $blockedExactSet = @($BlockedExact | Where-Object { $_ } | ForEach-Object { ConvertTo-NormalizedDomain $_ } | Select-Object -Unique)
+    $blockedRootSet = @($BlockedRoots | Where-Object { $_ } | ForEach-Object { Get-ETLDPlusOne $_ } | Where-Object { $_ } | Select-Object -Unique)
+    $releasedRootSet = @($ReleasedRoots | Where-Object { $_ } | ForEach-Object { Get-ETLDPlusOne $_ } | Where-Object { $_ } | Select-Object -Unique)
+
+    return [string[]]@(
+        $DiscoveredDomains |
+        Where-Object { $_ } |
+        ForEach-Object { ConvertTo-NormalizedDomain $_ } |
+        Where-Object { $_ } |
+        Sort-Object -Unique |
+        Where-Object {
+            $root = Get-ETLDPlusOne $_
+            ($blockedExactSet -notcontains $_) -and
+            ($blockedRootSet -notcontains $root) -and
+            ($releasedRootSet -notcontains $root) -and
+            ($_ -ne 'onmicrosoft.com')
+        }
+    )
+}
+
+function Resolve-TablConfirmationState {
+    <#
+    .SYNOPSIS
+    Resolves the operator-facing confirmation state for a TABL add attempt.
+
+    .DESCRIPTION
+    TABL adds can succeed before the service snapshot shows the new entry. This
+    helper distinguishes snapshot-confirmed entries from accepted-but-pending
+    entries so the terminal output does not incorrectly imply failure.
+
+    .PARAMETER Domain
+    Domain whose add state is being evaluated.
+
+    .PARAMETER SnapshotExact
+    Exact domains currently visible in the TABL snapshot.
+
+    .PARAMETER SnapshotRoots
+    Root domains currently visible in the TABL snapshot.
+
+    .PARAMETER AcceptedDomains
+    Domains accepted by the add cmdlet during this run.
+
+    .OUTPUTS
+    [string] One of: Confirmed, PendingVisibility, Failed.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][string]$Domain,
+        [Parameter()][string[]]$SnapshotExact = @(),
+        [Parameter()][string[]]$SnapshotRoots = @(),
+        [Parameter()][string[]]$AcceptedDomains = @()
+    )
+
+    $norm = ConvertTo-NormalizedDomain $Domain
+    if ([string]::IsNullOrWhiteSpace($norm)) { return 'Failed' }
+
+    $root = Get-ETLDPlusOne $norm
+    $exactSet = @($SnapshotExact | Where-Object { $_ } | ForEach-Object { ConvertTo-NormalizedDomain $_ } | Select-Object -Unique)
+    $rootSet = @($SnapshotRoots | Where-Object { $_ } | ForEach-Object { Get-ETLDPlusOne $_ } | Where-Object { $_ } | Select-Object -Unique)
+    $acceptedSet = @($AcceptedDomains | Where-Object { $_ } | ForEach-Object { ConvertTo-NormalizedDomain $_ } | Select-Object -Unique)
+
+    if (($exactSet -contains $norm) -or ($rootSet -contains $root)) { return 'Confirmed' }
+    if ($acceptedSet -contains $norm) { return 'PendingVisibility' }
+    return 'Failed'
+}
+
+function Confirm-ExchangeOnlineConnectionStart {
+    <#
+    .SYNOPSIS
+    Confirms whether an interactive Exchange Online sign-in should begin.
+
+    .DESCRIPTION
+    Starting delegated Exchange Online authentication can launch browser,
+    broker, or device-code prompts. This helper gives operators a clean way to
+    decline before the EXO module starts its token flow and potentially writes
+    provider stack traces for a cancelled sign-in.
+
+    .PARAMETER UseDefaults
+    Suppresses the prompt for explicitly non-interactive default-mode runs.
+
+    .PARAMETER PreferAppOnly
+    Suppresses the prompt for app-only authentication, which is non-interactive.
+
+    .OUTPUTS
+    [bool] True when connection should proceed; False when the operator declines.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [switch]$UseDefaults,
+        [switch]$PreferAppOnly
+    )
+
+    if ($UseDefaults -or $PreferAppOnly) { return $true }
+    if ((Test-ValidYesNo $Pref_ConfirmBeforeExchangeConnectDefault) -ne 'Y') { return $true }
+
+    while ($true) {
+        $answer = Read-Host 'Connect to Exchange Online now? (Y/N, Default: Y)'
+        if ([string]::IsNullOrWhiteSpace($answer)) { return $true }
+
+        $normalisedAnswer = $answer.Trim().Substring(0, 1).ToUpperInvariant()
+        switch ($normalisedAnswer) {
+            'Y' { return $true }
+            'N' { return $false }
+            default { Write-ConsoleMessage 'Please enter Y or N.' -ForegroundColor Yellow }
+        }
+    }
+}
+
 # ---------------------------
 # MAIN
 # ---------------------------
-if ($NoMain -or $Script:LibraryMode -or $env:Q2B_LibraryMode -eq '1') {
+if ($script:IsLibraryMode) {
     Write-Verbose 'Library mode active: skipping MAIN execution.'
     return
 }
@@ -3180,10 +4252,36 @@ if ($DiagConnectionTiming) {
     Write-ConsoleMessage "[Diag] Starting connection diagnostics..." -ForegroundColor Cyan
 }
 
+if (-not (Confirm-ExchangeOnlineConnectionStart -UseDefaults:$UseDefaults -PreferAppOnly:$PreferAppOnly)) {
+    Write-ConsoleMessage 'Exchange Online sign-in was declined. No quarantine, TABL, DNSBL, or delete actions were performed.' -ForegroundColor Yellow
+    if ($script:TranscriptStarted) {
+        try { Stop-Transcript | Out-Null }
+        catch { Write-Verbose ("Stop-Transcript failed after connection decline: {0}" -f $_.Exception.Message) }
+    }
+    exit 1
+}
+
 $swOverall = [System.Diagnostics.Stopwatch]::StartNew()
 $swConn = [System.Diagnostics.Stopwatch]::StartNew()
 if (-not (Connect-ExchangeOnlineWithRetry -UserPrincipalName $UserPrincipalName -MaxRetries $MaxRetries -BackoffSecondsBase $BackoffSecondsBase -AppId $AppId -Organization $Organization -CertificateThumbprint $CertificateThumbprint -PreferAppOnly:$PreferAppOnly)) {
-    throw "Unable to connect to Exchange Online after $MaxRetries attempts."
+    $swConn.Stop()
+    $reason = $script:ConnectExchangeOnlineFailureReason
+    switch ($reason) {
+        'AuthenticationCancelled' {
+            Write-ConsoleMessage 'Exchange Online sign-in was cancelled or timed out. No quarantine, TABL, DNSBL, or delete actions were performed.' -ForegroundColor Yellow
+        }
+        'MicrosoftLoginEndpointUnresolved' {
+            Write-ConsoleMessage ('Unable to connect to Exchange Online because login.microsoftonline.com could not be resolved after {0} attempt(s). Check DNS, VPN, proxy, or network connectivity. No changes were made.' -f $MaxRetries) -ForegroundColor Yellow
+        }
+        default {
+            Write-ConsoleMessage ('Unable to connect to Exchange Online after {0} attempt(s). No changes were made.' -f $MaxRetries) -ForegroundColor Yellow
+        }
+    }
+    if ($script:TranscriptStarted) {
+        try { Stop-Transcript | Out-Null }
+        catch { Write-Verbose ("Stop-Transcript failed after connection failure: {0}" -f $_.Exception.Message) }
+    }
+    exit 1
 }
 $swConn.Stop()
 if ($DiagConnectionTiming) {
@@ -3260,38 +4358,10 @@ if ($excludedExact.Count -gt 0) { Write-ConsoleMessage ("Excluded exact: {0}" -f
 
 # Fetch quarantine
 $start = (Get-Date).AddDays(-30); $end = Get-Date
-$page = 1
-$all = New-Object System.Collections.Generic.List[object]
-
 if ($DiagConnectionTiming) { $swFetch = [System.Diagnostics.Stopwatch]::StartNew() }
-do {
-    $batch = Invoke-OperationWithRetry -Label ("Get-QuarantineMessage page {0}" -f $page) -MaxRetries $MaxRetries -BackoffSecondsBase $BackoffSecondsBase -Operation {
-        $qmArgs = @{ StartReceivedDate = $start; EndReceivedDate = $end; PageSize = $PageSize; Page = $page; ErrorAction = 'Stop' }
-        if ($QuarantineTypesFilter.Count -gt 0) { $qmArgs['QuarantineTypes'] = $QuarantineTypesFilter }
-        $result = $null
-        if ($PolicyTypeFilter.Count -gt 0) {
-            try {
-                $qmArgs['PolicyTypes'] = $PolicyTypeFilter
-                $result = Get-QuarantineMessage @qmArgs
-            }
-            catch {
-                $qmArgs.Remove('PolicyTypes')
-                Write-Verbose ("Get-QuarantineMessage with -PolicyTypes failed, retrying without: {0}" -f $_.Exception.Message)
-                $result = Get-QuarantineMessage @qmArgs
-            }
-        }
-        else {
-            $result = Get-QuarantineMessage @qmArgs
-        }
-        $result
-    }
-    $batchArray = @($batch)
-    $count = $batchArray.Count
-    if ($count -gt 0) { $all.AddRange($batchArray) }
-    $page++
-} while ($count -eq $PageSize)
+$all = @(Get-QuarantineMessagesPaged -StartReceivedDate $start -EndReceivedDate $end -PageSize $PageSize -QuarantineTypesFilter $QuarantineTypesFilter -PolicyTypeFilter $PolicyTypeFilter -MaxRetries $MaxRetries -BackoffSecondsBase $BackoffSecondsBase -ActivityLabel 'Initial quarantine fetch')
 if ($DiagConnectionTiming) { $swFetch.Stop(); Write-ConsoleMessage ("[Diag] Quarantine fetch duration: {0} ms" -f $swFetch.ElapsedMilliseconds) -ForegroundColor Cyan }
-$all = @($all.ToArray())
+Write-ConsoleMessage ("Initial quarantine fetch returned {0} message(s)." -f $all.Count) -ForegroundColor Cyan
 $filtersAppliedBeforeRelease = $false
 if ($QuarantineReasonFilter.Count -gt 0 -or $PolicyTypeFilter.Count -gt 0 -or $QuarantineTypesFilter.Count -gt 0) {
     $all = @(Select-QuarantineMessage -Messages $all -QuarantineReasonFilter $QuarantineReasonFilter -PolicyTypeFilter $PolicyTypeFilter -QuarantineTypesFilter $QuarantineTypesFilter)
@@ -3302,51 +4372,77 @@ if ($QuarantineReasonFilter.Count -gt 0 -or $PolicyTypeFilter.Count -gt 0 -or $Q
 # Pre-block: interactive release workflow
 try {
     # Pass actual messages as an array, not the List wrapper; default summary to zeros
-    $relSummary = [pscustomobject]@{ Released = 0; Allowed = 0; DeletedSoft = 0; DeletedHard = 0 }
+    $relSummary = [pscustomobject]@{ Selected = 0; Released = 0; Failed = 0; Allowed = 0; DeletedSoft = 0; DeletedHard = 0; ReleasedIdentities = @(); ReleasedRoots = @() }
     $tmpRel = Invoke-QuarantineReleaseWorkflow -Messages $all -MaxRetries $MaxRetries -BackoffSecondsBase $BackoffSecondsBase
     if ($null -ne $tmpRel) { $relSummary = $tmpRel }
     if ($relSummary -and ($relSummary.Released -gt 0 -or $relSummary.Allowed -gt 0 -or $relSummary.DeletedSoft -gt 0 -or $relSummary.DeletedHard -gt 0)) {
-        Write-ConsoleMessage ("Release stage: Released={0} | Allowed={1} | DeletedSoft={2} | DeletedHard={3}" -f $relSummary.Released, $relSummary.Allowed, $relSummary.DeletedSoft, $relSummary.DeletedHard) -ForegroundColor Cyan
-        # Refresh quarantine list after release stage
-        $page = 1
-        $all = New-Object System.Collections.Generic.List[object]
-        if ($DiagConnectionTiming) { $swFetch = [System.Diagnostics.Stopwatch]::StartNew() }
-        do {
-            $qmArgs = @{ Page = $page; PageSize = $PageSize; StartReceivedDate = $start; EndReceivedDate = $end }
-            $batch = Invoke-OperationWithRetry -Operation {
-                Get-QuarantineMessage @qmArgs
-            } -Label ("Get-QuarantineMessage page {0}" -f $page) -MaxRetries $MaxRetries -BackoffSecondsBase $BackoffSecondsBase
-            $batchArray = @($batch)
-            $count = $batchArray.Count
-            if ($count -gt 0) { $all.AddRange($batchArray) }
-            $page++
-        } while ($count -eq $PageSize)
-        if ($DiagConnectionTiming) { $swFetch.Stop(); Write-ConsoleMessage ("[Diag] Post-release fetch duration: {0} ms" -f $swFetch.ElapsedMilliseconds) -ForegroundColor Cyan }
-        $all = @($all.ToArray())
-        if ($QuarantineReasonFilter.Count -gt 0 -or $PolicyTypeFilter.Count -gt 0 -or $QuarantineTypesFilter.Count -gt 0) {
-            $all = @(Select-QuarantineMessage -Messages $all -QuarantineReasonFilter $QuarantineReasonFilter -PolicyTypeFilter $PolicyTypeFilter -QuarantineTypesFilter $QuarantineTypesFilter)
-            Write-ConsoleMessage ("Post-release filters applied. Items in scope: {0}" -f $all.Count) -ForegroundColor Cyan
+        Write-ConsoleMessage ("Release stage: Selected={0} | Released={1} | Failed={2} | Allowed={3} | DeletedSoft={4} | DeletedHard={5}" -f $relSummary.Selected, $relSummary.Released, $relSummary.Failed, $relSummary.Allowed, $relSummary.DeletedSoft, $relSummary.DeletedHard) -ForegroundColor Cyan
+        $shouldRefreshAfterRelease = $false
+        switch ($Pref_PostReleaseRefreshMode) {
+            'Full' { $shouldRefreshAfterRelease = $true }
+            'Auto' { if ($relSummary.Failed -gt 0) { $shouldRefreshAfterRelease = $true } }
+            default { $shouldRefreshAfterRelease = $false }
+        }
+        if ($shouldRefreshAfterRelease) {
+            # Refresh quarantine list after release stage when the policy requires server reconciliation.
+            if ($DiagConnectionTiming) { $swFetch = [System.Diagnostics.Stopwatch]::StartNew() }
+            $all = @(Get-QuarantineMessagesPaged -StartReceivedDate $start -EndReceivedDate $end -PageSize $PageSize -QuarantineTypesFilter $QuarantineTypesFilter -PolicyTypeFilter $PolicyTypeFilter -MaxRetries $MaxRetries -BackoffSecondsBase $BackoffSecondsBase -ActivityLabel 'Post-release quarantine refresh')
+            if ($DiagConnectionTiming) { $swFetch.Stop(); Write-ConsoleMessage ("[Diag] Post-release fetch duration: {0} ms" -f $swFetch.ElapsedMilliseconds) -ForegroundColor Cyan }
+            Write-ConsoleMessage ("Post-release refresh returned {0} message(s)." -f $all.Count) -ForegroundColor Cyan
+            if ($QuarantineReasonFilter.Count -gt 0 -or $PolicyTypeFilter.Count -gt 0 -or $QuarantineTypesFilter.Count -gt 0) {
+                $all = @(Select-QuarantineMessage -Messages $all -QuarantineReasonFilter $QuarantineReasonFilter -PolicyTypeFilter $PolicyTypeFilter -QuarantineTypesFilter $QuarantineTypesFilter)
+                Write-ConsoleMessage ("Post-release filters applied. Items in scope: {0}" -f $all.Count) -ForegroundColor Cyan
+            }
+        }
+        else {
+            Write-ConsoleMessage 'Skipping full post-release refresh and continuing with the local reconciled quarantine view.' -ForegroundColor Cyan
         }
     }
 }
 catch { Write-ConsoleMessage ("Release workflow encountered an error: {0}" -f $_.Exception.Message) -ForegroundColor Yellow }
 
 # Guardrail: skip any messages that have been Released
+$releasedIdentitySet = New-Object 'System.Collections.Generic.HashSet[string]'
+$releasedRootSet = New-Object 'System.Collections.Generic.HashSet[string]'
+foreach ($releasedIdentity in @($relSummary.ReleasedIdentities)) {
+    if ($releasedIdentity) { $releasedIdentitySet.Add($releasedIdentity.ToString()) | Out-Null }
+}
+foreach ($releasedRoot in @($relSummary.ReleasedRoots)) {
+    if ($releasedRoot) { $releasedRootSet.Add((Get-ETLDPlusOne $releasedRoot)) | Out-Null }
+}
 $kept = New-Object System.Collections.Generic.List[object]
 $releasedCount = 0
 foreach ($m in $all) {
     $isReleased = $false
+    $messageIdentity = $null
+    $messageRoot = $null
     try {
+        if ($m.Identity) { $messageIdentity = $m.Identity.ToString() }
+        if ($m.SenderAddress) { $messageRoot = Get-ETLDPlusOne (ConvertTo-NormalizedAddress $m.SenderAddress) }
         if ($m.PSObject.Properties['ReleaseStatus']) { $isReleased = ($m.ReleaseStatus -match '^Released$') }
         elseif ($m.PSObject.Properties['Status']) { $isReleased = ($m.Status -match '^Released$') }
     }
     catch { $isReleased = $false }
-    if ($isReleased) { $releasedCount++ } else { $kept.Add($m) }
+    if ($messageIdentity -and $releasedIdentitySet.Contains($messageIdentity)) { $isReleased = $true }
+    if ($isReleased) {
+        $releasedCount++
+        if ($messageRoot) { $releasedRootSet.Add($messageRoot) | Out-Null }
+    }
+    else { $kept.Add($m) }
 }
 $all = @($kept.ToArray())
 
+$retainedReleasedCount = @($all | Where-Object {
+        try {
+            $_.Identity -and $releasedIdentitySet.Contains($_.Identity.ToString())
+        }
+        catch { $false }
+    }).Count
+
 Write-ConsoleMessage ("Total quarantined items: {0}" -f $all.Count) -ForegroundColor Green
 if ($releasedCount -gt 0) { Write-ConsoleMessage ("Skipped released messages: {0}" -f $releasedCount) -ForegroundColor Yellow }
+if ($releasedRootSet.Count -gt 0) { Write-ConsoleMessage ("Released domains suppressed from block candidates in this run: {0}" -f $releasedRootSet.Count) -ForegroundColor Yellow }
+if ($relSummary.Selected -gt 0) { Write-ConsoleMessage ("Post-release reconciliation: Requested={0} | Succeeded={1} | Failed={2} | StillQuarantinedAfterRefresh={3}" -f $relSummary.Selected, $relSummary.Released, $relSummary.Failed, $retainedReleasedCount) -ForegroundColor Cyan }
 
 # Optional client-side filters: Quarantine reason, Policy type, Quarantine types
 if (-not $filtersAppliedBeforeRelease -and ($QuarantineReasonFilter.Count -gt 0 -or $PolicyTypeFilter.Count -gt 0 -or $QuarantineTypesFilter.Count -gt 0)) {
@@ -3357,6 +4453,7 @@ if (-not $filtersAppliedBeforeRelease -and ($QuarantineReasonFilter.Count -gt 0 
 $discovered = New-Object 'System.Collections.Generic.HashSet[string]'
 $mismatches = New-Object System.Collections.Generic.List[object]
 ${domainCounts} = @{}
+$originAnalysisCache = @{}
 
 # Optional assurance: initialise header stats and failures collection
 if ($ValidateHeaders) {
@@ -3374,66 +4471,75 @@ if ($ValidateHeaders) {
 }
 
 $failedMsgObjs = New-Object System.Collections.Generic.List[object]
+$analysisTotal = $all.Count
+if ($analysisTotal -gt 0) {
+    Write-ConsoleMessage ("Analysing {0} remaining quarantine message(s) to identify sender domains..." -f $analysisTotal) -ForegroundColor Cyan
+}
 
-foreach ($msg in $all) {
-    $senderRoot = $null
-    if ($msg.SenderAddress) { $senderRoot = Get-ETLDPlusOne (ConvertTo-NormalizedAddress $msg.SenderAddress) }
-
-    try {
-        if ($ValidateHeaders) { $script:hdrStats.Attempted++ }
-        $headerText = Invoke-OperationWithRetry -Label "Get-QuarantineMessageHeader" -MaxRetries $MaxRetries -BackoffSecondsBase $BackoffSecondsBase -Operation {
-            Get-QuarantineMessageHeader -Identity $msg.Identity -ErrorAction Stop
-        }
-        if ($ValidateHeaders) {
-            $script:hdrStats.Succeeded++
-            if ($MaxHeaderDumps -gt 0 -and $script:hdrStats.Dumps -lt $MaxHeaderDumps) {
-                try {
-                    $safeId = $msg.Identity.ToString()
-                    $safeId = ($safeId -replace '[\\/:*?"<>|]', '_')
-                    $dumpPath = Join-Path $HeaderDumpFolder ("header_{0}.txt" -f $safeId)
-                    Set-Content -Path $dumpPath -Value $headerText -Encoding UTF8
-                    $script:hdrStats.Dumps++
-                }
-                catch { Write-Verbose ("Header dump write failed: {0}" -f $_.Exception.Message) }
-            }
-        }
-        $origin = Get-MessageOriginAnalysis -Message $msg -HeaderText $headerText
-        $senderRoot = $origin.SenderRoot
-
-        foreach ($d in $origin.CandidatesToConsider) {
-            $root = Get-ETLDPlusOne $d
-            $dNorm = ConvertTo-NormalizedDomain $d
-            if ( ($excludedExact -notcontains $dNorm) -and ($excludedRoots -notcontains $root) ) {
-                [void]$discovered.Add($d)
-                $key = $root
-                if (-not ${domainCounts}.ContainsKey($key)) { ${domainCounts}[$key] = 0 }
-                ${domainCounts}[$key] = ${domainCounts}[$key] + 1
-            }
-        }
-
-        if ($origin.SenderRoot -and $origin.MailFromRoot -and ($origin.MailFromRoot -ne $origin.SenderRoot)) {
-            $mismatches.Add([pscustomobject]@{
-                    MessageId     = $msg.MessageId
-                    SenderAddress = $msg.SenderAddress
-                    SenderRoot    = $origin.SenderRoot
-                    MailFromExact = $origin.MailFromExact
-                    MailFromRoot  = $origin.MailFromRoot
-                    Subject       = $msg.Subject
-                    ReceivedTime  = $msg.ReceivedTime
-                })
-        }
-    }
-    catch {
+$headerFetchResults = @(Get-HeaderFetchBatch -Messages $all -ActivityLabel 'Header analysis' -MaxRetries $MaxRetries -BackoffSecondsBase $BackoffSecondsBase)
+$analysisIndex = 0
+foreach ($headerResult in $headerFetchResults) {
+    $analysisIndex++
+    $msg = $headerResult.Message
+    Write-ActivityProgress -Activity 'Header analysis' -Status ("Analysing {0}/{1}: {2}" -f $analysisIndex, $analysisTotal, $msg.Identity) -Current $analysisIndex -Total $analysisTotal
+    if ($ValidateHeaders) { $script:hdrStats.Attempted++ }
+    if (-not $headerResult.Success) {
         if ($ValidateHeaders) {
             $script:hdrStats.Failed++
-            $script:hdrStats.Failures.Add([pscustomobject]@{ Identity = $msg.Identity; Error = $_.Exception.Message; When = (Get-Date) })
+            $script:hdrStats.Failures.Add([pscustomobject]@{ Identity = $msg.Identity; Error = $headerResult.Error; When = (Get-Date) })
             $failedMsgObjs.Add($msg)
-            Write-Verbose ("Header fetch failed for {0}: {1}" -f $msg.Identity, $_.Exception.Message)
+            Write-Verbose ("Header fetch failed for {0}: {1}" -f $msg.Identity, $headerResult.Error)
         }
         else {
-            Write-Warning ("Header fetch failed for {0}: {1}" -f $msg.Identity, $_.Exception.Message)
+            Write-Warning ("Header fetch failed for {0}: {1}" -f $msg.Identity, $headerResult.Error)
+        }
+        continue
+    }
+
+    $headerText = $headerResult.HeaderText
+    if ($ValidateHeaders) {
+        $script:hdrStats.Succeeded++
+        if ($MaxHeaderDumps -gt 0 -and $script:hdrStats.Dumps -lt $MaxHeaderDumps) {
+            try {
+                $safeId = $msg.Identity.ToString()
+                $safeId = ($safeId -replace '[\\/:*?"<>|]', '_')
+                $dumpPath = Join-Path $HeaderDumpFolder ("header_{0}.txt" -f $safeId)
+                Set-Content -Path $dumpPath -Value $headerText -Encoding UTF8
+                $script:hdrStats.Dumps++
+            }
+            catch { Write-Verbose ("Header dump write failed: {0}" -f $_.Exception.Message) }
         }
     }
+
+    $origin = Get-MessageOriginAnalysis -Message $msg -HeaderText $headerText
+    if ($msg.Identity) { $originAnalysisCache[$msg.Identity.ToString()] = $origin }
+
+    foreach ($d in $origin.CandidatesToConsider) {
+        $root = Get-ETLDPlusOne $d
+        $dNorm = ConvertTo-NormalizedDomain $d
+        if ( ($excludedExact -notcontains $dNorm) -and ($excludedRoots -notcontains $root) -and (-not $releasedRootSet.Contains($root)) ) {
+            [void]$discovered.Add($d)
+            $key = $root
+            if (-not ${domainCounts}.ContainsKey($key)) { ${domainCounts}[$key] = 0 }
+            ${domainCounts}[$key] = ${domainCounts}[$key] + 1
+        }
+    }
+
+    if ($origin.SenderRoot -and $origin.MailFromRoot -and ($origin.MailFromRoot -ne $origin.SenderRoot)) {
+        $mismatches.Add([pscustomobject]@{
+                MessageId     = $msg.MessageId
+                SenderAddress = $msg.SenderAddress
+                SenderRoot    = $origin.SenderRoot
+                MailFromExact = $origin.MailFromExact
+                MailFromRoot  = $origin.MailFromRoot
+                Subject       = $msg.Subject
+                ReceivedTime  = $msg.ReceivedTime
+            })
+    }
+}
+if ($analysisTotal -gt 0) {
+    Write-ActivityProgress -Activity 'Header analysis' -Status 'Completed' -Current $analysisTotal -Total $analysisTotal -Completed
+    Write-ConsoleMessage 'Header analysis complete. Building block candidate list...' -ForegroundColor Cyan
 }
 
 # Optional second pass for headers that failed in the first pass
@@ -3443,7 +4549,10 @@ if ($ValidateHeaders -and $failedMsgObjs.Count -gt 0) {
     $script:hdrStats.Retried = $retryList.Count
 
     $stillFailed = New-Object System.Collections.Generic.List[object]
+    $retryIndex = 0
     foreach ($r in $retryList) {
+        $retryIndex++
+        Write-ActivityProgress -Activity 'Header retry analysis' -Status ("Retrying {0}/{1}: {2}" -f $retryIndex, $retryList.Count, $r.Identity) -Current $retryIndex -Total $retryList.Count
         try {
             $headerText = Invoke-OperationWithRetry -Label ("Get-QuarantineMessageHeader:retry:{0}" -f $r.Identity) -MaxRetries ([math]::Min(2, $MaxRetries)) -BackoffSecondsBase $BackoffSecondsBase -Operation {
                 Get-QuarantineMessageHeader -Identity $r.Identity -ErrorAction Stop
@@ -3477,6 +4586,11 @@ if ($ValidateHeaders -and $failedMsgObjs.Count -gt 0) {
             if ($hm2.Success) { $headerFromRoot2 = Get-ETLDPlusOne $hm2.Groups[1].Value }
             if (-not $senderRoot2 -and $headerFromRoot2) { $senderRoot2 = $headerFromRoot2 }
 
+            $originAnalysisCache[$r.Identity.ToString()] = [pscustomobject]@{
+                SenderRoot     = $senderRoot2
+                PreferredRoots = @($senderRoot2, $mailFromRoot, $headerFromRoot2) | Where-Object { $_ } | Select-Object -Unique
+            }
+
             $heloDom2 = $null; $ptrDom2 = $null
             if ($ffHints2) {
                 if ($ffHints2.HELO) { $heloDom2 = ConvertTo-NormalizedDomain $ffHints2.HELO }
@@ -3486,7 +4600,7 @@ if ($ValidateHeaders -and $failedMsgObjs.Count -gt 0) {
                 if ($d) {
                     $root = Get-ETLDPlusOne $d
                     $dNorm2 = ConvertTo-NormalizedDomain $d
-                    if ( ($excludedExact -notcontains $dNorm2) -and ($excludedRoots -notcontains $root) ) {
+                    if ( ($excludedExact -notcontains $dNorm2) -and ($excludedRoots -notcontains $root) -and (-not $releasedRootSet.Contains($root)) ) {
                         [void]$discovered.Add($d)
                         $key = $root
                         if (-not ${domainCounts}.ContainsKey($key)) { ${domainCounts}[$key] = 0 }
@@ -3513,6 +4627,7 @@ if ($ValidateHeaders -and $failedMsgObjs.Count -gt 0) {
     }
     $script:hdrStats.Failures = $stillFailed
     $script:hdrStats.Failed = $stillFailed.Count
+    if ($retryList.Count -gt 0) { Write-ActivityProgress -Activity 'Header retry analysis' -Status 'Completed' -Current $retryList.Count -Total $retryList.Count -Completed }
 }
 
 # Snapshot TABL (expiring + no-expiration)
@@ -3533,9 +4648,8 @@ else {
 # Deduplicate candidates (drop exact or root already blocked)
 $discArray = @($discovered)
 $discoveredUniqueCount = $discArray.Count
-$candidates = $discArray | Sort-Object -Unique | Where-Object {
-    ($blockedExact -notcontains $_) -and ( $blockedRoots -notcontains (Get-ETLDPlusOne $_) )
-} | Where-Object { $_ -ne 'onmicrosoft.com' }
+$releasedRootsForSuppression = @($releasedRootSet)
+$candidates = Get-BlockCandidateList -DiscoveredDomains $discArray -BlockedExact $blockedExact -BlockedRoots $blockedRoots -ReleasedRoots $releasedRootsForSuppression
 
 # Conflicts with Allow list from pre-suppression candidates
 $candidatesPreAllow = $candidates
@@ -3563,10 +4677,12 @@ $alreadyBlockedCount = (@($discArray) | Where-Object { ($blockedExact -contains 
 $offeredCount = $candidates.Count
 $allowSuppressedCount = 0
 if ($allowConflicts.Count -gt 0) { $allowSuppressedCount = $allowConflicts.Count }
-$excludedCount = [math]::Max(0, $discoveredUniqueCount - $offeredCount - $alreadyBlockedCount)
+$releasedSuppressedCount = @($discArray | Sort-Object -Unique | Where-Object { $releasedRootSet.Contains((Get-ETLDPlusOne $_)) }).Count
+$excludedCount = [math]::Max(0, $discoveredUniqueCount - $offeredCount - $alreadyBlockedCount - $allowSuppressedCount - $releasedSuppressedCount)
 
 Write-ConsoleMessage ("Already in block list: {0}" -f $alreadyBlockedCount) -ForegroundColor Green
 Write-ConsoleMessage ("Candidates to add to block list: {0}" -f $offeredCount) -ForegroundColor Green
+if ($releasedSuppressedCount -gt 0) { Write-ConsoleMessage ("Released-domain suppressions: {0}" -f $releasedSuppressedCount) -ForegroundColor Yellow }
 
 if ($offeredCount -eq 0 -and $discoveredUniqueCount -gt 0) {
     # Diagnostic: show why discovered domains were not offered
@@ -3665,6 +4781,9 @@ if ($candidates.Count -gt 0) {
         }
     }
 }
+if ($toAdd.Count -gt 0) {
+    Write-ConsoleMessage ("Domain selection complete. Processing {0} selected domain(s)..." -f $toAdd.Count) -ForegroundColor Cyan
+}
 
 # Pre-filter in case user selected something that became blocked meanwhile
 $toAdd = $toAdd | Where-Object { ($blockedExact -notcontains $_) -and ( $blockedRoots -notcontains (Get-ETLDPlusOne $_) ) }
@@ -3692,10 +4811,10 @@ $expiryArgs = Get-BlockExpiryArg -BlockExpiry $effBlockExpiry -BlockExpiryDate $
 $noteText = if ($Pref_BlockNoteTemplate) { Get-BlockNote } else { Get-BlockNote }
 
 # Add (skip duplicates; do not retry duplicates)
-$added = @(); $failed = @(); $confirmedCount = 0
+$added = @(); $failedAdds = @(); $confirmedCount = 0; $pendingVisibility = @()
 if ($toAdd.Count -gt 0) {
     if ($DryRun) { Write-ConsoleMessage "[DryRun] Skipping actual TABL changes; simulating add flow." -ForegroundColor Yellow }
-    Write-ConsoleMessage "Adding selected domains to Tenant Block List..." -ForegroundColor Cyan
+    Write-ConsoleMessage ("Submitting {0} selected domain(s) to the Tenant Block List..." -f $toAdd.Count) -ForegroundColor Cyan
 
     # Batch add first
     # Refresh snapshot before add to avoid offering newly-blocked entries
@@ -3709,81 +4828,88 @@ if ($toAdd.Count -gt 0) {
     }
     else {
         $batchRes = Add-TenantBlockListSender -Domains $toAdd -NoExpiration:$expiryArgs.NoExpiration -ExpirationDate $expiryArgs.ExpirationDate -Notes $noteText -MaxRetries $MaxRetries -BackoffSecondsBase $BackoffSecondsBase -TrustOnSuccess:$PreferCmdletConfirm
-        $addedViaCmdlet = @()
-        if ($batchRes -and $batchRes.Success) { $addedViaCmdlet = $batchRes.Added }
         if (-not $batchRes.Success) {
             # Fallback: individual adds (skip duplicates)
             foreach ($d in $toAdd) {
                 if ( ($blockedExact -contains $d) -or ( $blockedRoots -contains (Get-ETLDPlusOne $d) ) ) { continue }
                 $res = Add-TenantBlockListSender -Domains @($d) -NoExpiration:$expiryArgs.NoExpiration -ExpirationDate $expiryArgs.ExpirationDate -Notes $noteText -MaxRetries $MaxRetries -BackoffSecondsBase $BackoffSecondsBase -TrustOnSuccess:$PreferCmdletConfirm
-                if ($res.Success) { $added += $d; if ($res.Added) { $addedViaCmdlet += $res.Added } } else { $failed += $d }
+                if ($res.Success) { $added += $d } else { $failedAdds += $d }
             }
         }
         else {
             $added = $toAdd
         }
-        # Keep a unique list of domains echoed by the cmdlet for higher-trust pre-confirm
-        $script:AddedViaCmdlet = @($addedViaCmdlet | Sort-Object -Unique)
     }
 }
 
-# Confirm additions; retry individually up to 2 times if not confirmed
+# Confirm additions; distinguish accepted adds from delayed snapshot visibility
 if ($added.Count -gt 0) {
-    if ($InitialConfirmDelaySeconds -gt 0) { Start-Sleep -Seconds $InitialConfirmDelaySeconds }
-    $refresh = Get-TenantBlockListSnapshot
-    $pending = New-Object System.Collections.Generic.List[string]
-
-    foreach ($d in ($added | Sort-Object -Unique)) {
-        $norm = ConvertTo-NormalizedDomain $d
-        # Trust cmdlet echo if available; tentatively confirm
-        if ($script:AddedViaCmdlet -and ($script:AddedViaCmdlet -contains $norm)) {
-            Write-ConsoleMessage ("[OK] Added (cmdlet): {0}" -f $d) -ForegroundColor Green
-            $confirmedCount++
-            continue
-        }
-        if ( ($refresh.Exact -contains $d) -or ( $refresh.Root -contains (Get-ETLDPlusOne $d) ) ) {
-            Write-ConsoleMessage ("[OK] Added and confirmed: {0}" -f $d) -ForegroundColor Green
-            $confirmedCount++
-        }
-        else {
-            $pending.Add($d)
-        }
+    $acceptedDomains = @($added | ForEach-Object { ConvertTo-NormalizedDomain $_ } | Sort-Object -Unique)
+    if ($Pref_TablConfirmationPolicy -eq 'AcceptedIsEnough') {
+        $confirmedCount = $acceptedDomains.Count
+        Write-ConsoleMessage 'TABL confirmation policy is AcceptedIsEnough. Accepted additions are being treated as confirmed without waiting for snapshot visibility.' -ForegroundColor Cyan
     }
+    else {
+        Write-ConsoleMessage ("TABL submission accepted for {0} domain(s). Checking service visibility..." -f $acceptedDomains.Count) -ForegroundColor Cyan
+        if ($InitialConfirmDelaySeconds -gt 0) { Start-Sleep -Seconds $InitialConfirmDelaySeconds }
+        $refresh = Get-TenantBlockListSnapshot
+        $pending = New-Object System.Collections.Generic.List[string]
 
-    # Extended backoff wait up to MaxConfirmWaitSeconds (tuned progressive backoff)
-    if ($pending.Count -gt 0 -and $MaxConfirmWaitSeconds -gt 0) {
-        $elapsed = 0
-        $step = $Pref_ConfirmBackoffStartSeconds
-        while ($elapsed -lt $MaxConfirmWaitSeconds -and $pending.Count -gt 0) {
-            Start-Sleep -Seconds $step
-            $elapsed += $step
-            if ($step -lt $Pref_ConfirmBackoffMaxSeconds) { $step += $Pref_ConfirmBackoffIncrementSeconds } # progressive backoff with cap
-            $snap = Get-TenantBlockListSnapshot
-            $still = New-Object System.Collections.Generic.List[string]
-            foreach ($d in $pending) {
-                if ( ($snap.Exact -contains $d) -or ( $snap.Root -contains (Get-ETLDPlusOne $d) ) ) {
-                    Write-ConsoleMessage ("[OK] Confirmed present after delay: {0}" -f $d) -ForegroundColor Green
-                    $confirmedCount++
-                }
-                else {
-                    $still.Add($d)
-                }
+        foreach ($d in ($added | Sort-Object -Unique)) {
+            $state = Resolve-TablConfirmationState -Domain $d -SnapshotExact $refresh.Exact -SnapshotRoots $refresh.Root -AcceptedDomains $acceptedDomains
+            if ($state -eq 'Confirmed') {
+                Write-ConsoleMessage ("[OK] Added and confirmed: {0}" -f $d) -ForegroundColor Green
+                $confirmedCount++
             }
-            $pending = $still
+            else {
+                $pending.Add($d)
+            }
         }
-    }
 
-    # Re-add once if still missing, then final snapshot check
-    foreach ($d in @($pending)) {
-        $res2 = Add-TenantBlockListSender -Domains @($d) -NoExpiration:$expiryArgs.NoExpiration -ExpirationDate $expiryArgs.ExpirationDate -Notes $noteText -MaxRetries $MaxRetries -BackoffSecondsBase $BackoffSecondsBase -TrustOnSuccess:$PreferCmdletConfirm
-        $post = Get-TenantBlockListSnapshot
-        if ( ($post.Exact -contains $d) -or ( $post.Root -contains (Get-ETLDPlusOne $d) ) -or ($res2.Success -and ($res2.Added -contains (ConvertTo-NormalizedDomain $d))) ) {
-            Write-ConsoleMessage ("[OK] Added and confirmed after retry: {0}" -f $d) -ForegroundColor Green
-            $confirmedCount++
+        # Extended backoff wait up to MaxConfirmWaitSeconds (tuned progressive backoff)
+        if ($pending.Count -gt 0 -and $MaxConfirmWaitSeconds -gt 0) {
+            $elapsed = 0
+            $step = $Pref_ConfirmBackoffStartSeconds
+            Write-ConsoleMessage ("Waiting for TABL snapshot visibility for {0} accepted domain(s)..." -f $pending.Count) -ForegroundColor Cyan
+            while ($elapsed -lt $MaxConfirmWaitSeconds -and $pending.Count -gt 0) {
+                Start-Sleep -Seconds $step
+                $elapsed += $step
+                if ($step -lt $Pref_ConfirmBackoffMaxSeconds) { $step += $Pref_ConfirmBackoffIncrementSeconds } # progressive backoff with cap
+                $snap = Get-TenantBlockListSnapshot
+                $still = New-Object System.Collections.Generic.List[string]
+                foreach ($d in $pending) {
+                    $state = Resolve-TablConfirmationState -Domain $d -SnapshotExact $snap.Exact -SnapshotRoots $snap.Root -AcceptedDomains $acceptedDomains
+                    if ($state -eq 'Confirmed') {
+                        Write-ConsoleMessage ("[OK] Confirmed present after delay: {0}" -f $d) -ForegroundColor Green
+                        $confirmedCount++
+                    }
+                    else {
+                        $still.Add($d)
+                    }
+                }
+                $pending = $still
+            }
         }
-        else {
-            Write-Warning ("Not confirmed after extended waits: {0}" -f $d)
-            $failed += $d
+
+        foreach ($d in @($pending)) {
+            $state = Resolve-TablConfirmationState -Domain $d -SnapshotExact @() -SnapshotRoots @() -AcceptedDomains $acceptedDomains
+            if ($state -eq 'PendingVisibility') {
+                $pendingVisibility += $d
+            }
+            else {
+                $failedAdds += $d
+            }
+        }
+
+        $pendingVisibility = @($pendingVisibility | Sort-Object -Unique)
+        if ($pendingVisibility.Count -gt 0) {
+            $pendingPreview = @($pendingVisibility | Select-Object -First 10)
+            $pendingSuffix = ''
+            if ($pendingVisibility.Count -gt $pendingPreview.Count) {
+                $pendingSuffix = (' ... and {0} more' -f ($pendingVisibility.Count - $pendingPreview.Count))
+            }
+            Write-ConsoleMessage ("TABL submission accepted for {0} domain(s), but snapshot visibility is still pending after {1} seconds." -f $pendingVisibility.Count, $MaxConfirmWaitSeconds) -ForegroundColor Yellow
+            Write-ConsoleMessage ("Pending visibility domains: {0}{1}" -f ($pendingPreview -join ', '), $pendingSuffix) -ForegroundColor Yellow
         }
     }
 }
@@ -3821,7 +4947,8 @@ if ($ValidateHeaders) {
 
 # End-of-run summary
 $addedOKCount = @($added | Sort-Object -Unique).Count
-$unconfirmedCount = @($failed | Sort-Object -Unique).Count
+$pendingVisibilityCount = @($pendingVisibility | Sort-Object -Unique).Count
+$failedAddCount = @($failedAdds | Sort-Object -Unique).Count
 Write-ConsoleMessage "---- Summary ----" -ForegroundColor Cyan
 Write-ConsoleMessage ("Analysed: {0} | Released skipped: {1}" -f $all.Count, $releasedCount)
 if ($relSummary) {
@@ -3838,7 +4965,7 @@ if ($allowSuppressedCount -gt 0 -and (-not $OverrideAllowConflicts)) {
     }
 }
 Write-ConsoleMessage ("Offered: {0} | Selected: {1}" -f $offeredCount, $selectedCount)
-Write-ConsoleMessage ("Added: {0} | Confirmed: {1} | Not confirmed: {2}" -f $addedOKCount, $confirmedCount, $unconfirmedCount)
+Write-ConsoleMessage ("Added: {0} | Confirmed: {1} | Pending visibility: {2} | Failed adds: {3}" -f $addedOKCount, $confirmedCount, $pendingVisibilityCount, $failedAddCount)
 
 # Optional DNSBL reporting before deletion (only when at least one domain was selected to BLOCK)
 $dnsblSummary = $null
@@ -3863,7 +4990,7 @@ if ($dnsblSummary) {
 $deleteSummary = $null
 try {
     if ($selectedCount -gt 0) {
-        $deleteSummary = Invoke-DeleteQuarantineMessage -Messages $all -Mode $DeleteQuarantineMode -SelectedDomains $toAdd
+        $deleteSummary = Invoke-DeleteQuarantineMessage -Messages $all -Mode $DeleteQuarantineMode -SelectedDomains $toAdd -OriginAnalysisCache $originAnalysisCache
     }
     else {
         Write-ConsoleMessage ('Skipped deletion: no domains selected to BLOCK.') -ForegroundColor Yellow
@@ -3904,9 +5031,11 @@ if ($script:DidConnect) {
         Write-Warning ("Disconnect failed: {0}" -f $errMsg)
     }
 }
-try { Stop-Transcript | Out-Null }
-catch {
-    $errMsg = ''
-    try { $errMsg = $_.Exception.Message } catch { $errMsg = [string]$_ }
-    Write-Verbose ("Stop-Transcript failed: {0}" -f $errMsg)
+if ($script:TranscriptStarted) {
+    try { Stop-Transcript | Out-Null }
+    catch {
+        $errMsg = ''
+        try { $errMsg = $_.Exception.Message } catch { $errMsg = [string]$_ }
+        Write-Verbose ("Stop-Transcript failed: {0}" -f $errMsg)
+    }
 }

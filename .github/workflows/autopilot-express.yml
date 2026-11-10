@@ -1,0 +1,44 @@
+name: Autopilot Express Offline
+
+"on":
+    push:
+        paths:
+            - "intune/devices/autopilot-express/**"
+            - ".github/workflows/autopilot-express.yml"
+    pull_request:
+        paths:
+            - "intune/devices/autopilot-express/**"
+            - ".github/workflows/autopilot-express.yml"
+    workflow_dispatch: {}
+
+permissions:
+    contents: read
+
+jobs:
+    offline:
+        runs-on: windows-latest
+        timeout-minutes: 30
+        strategy:
+            fail-fast: false
+            matrix:
+                shell: [pwsh, powershell]
+        defaults:
+            run:
+                shell: "${{ matrix.shell }}"
+        steps:
+            - name: Check out source
+              uses: actions/checkout@v4
+              with:
+                  persist-credentials: false
+            - name: Install pinned validation tools
+              run: |
+                  $ErrorActionPreference = 'Stop'
+                  [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+                  if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue)) {
+                    Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force
+                  }
+                  Install-Module -Name Pester -RequiredVersion 5.7.1 -Repository PSGallery -Scope CurrentUser -Force
+                  Install-Module -Name PSScriptAnalyzer -RequiredVersion 1.24.0 -Repository PSGallery -Scope CurrentUser -Force
+            - name: Run complete offline gates
+              run: |
+                  & ./intune/devices/autopilot-express/development/Invoke-OfflineValidation.ps1

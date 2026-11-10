@@ -6,7 +6,20 @@ vscode/
 testing/
 tools/
 **/tests
+!intune/devices/autopilot-express/tests/
+!intune/devices/autopilot-express/tests/**
 **/.version
+
+# Autopilot Express operational records and recovery artefacts
+intune/devices/autopilot-express/data/
+intune/devices/autopilot-express/hashes/
+
+# Autopilot Express generated support bundles can contain operational identities
+intune/devices/autopilot-express/*.zip
+intune/devices/autopilot-express/errors/
+intune/devices/autopilot-express/errors-*.txt
+intune/devices/autopilot-express/**/*.log
+intune/devices/autopilot-express/Screenshot*.png
 
 # Files
 *.code-workspace
@@ -15,3 +28,4 @@ tools/
 analysis.json
 *-report.txt
 *-output.json
+*.pdf

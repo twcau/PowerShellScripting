@@ -1,12 +1,15 @@
 {
-  "version": "3.11.0",
-  "created": "2025-11-09T14:32:30Z",
+  "version": "4.6.0",
+  "created": "2026-10-15T14:29:22Z",
   "files": [
     {
       "path": ".nojekyll"
     },
     {
       "path": "404.html"
+    },
+    {
+      "path": "accessibility.md"
     },
     {
       "path": "accessibility\\index.html"
@@ -21,10 +24,22 @@
       "path": "buy-me-a-kofi\\index.html"
     },
     {
+      "path": "buy-me-a-kofi\\index.md"
+    },
+    {
+      "path": "changelog.md"
+    },
+    {
       "path": "changelog\\index.html"
     },
     {
+      "path": "configuration.md"
+    },
+    {
       "path": "configuration\\index.html"
+    },
+    {
+      "path": "contributing.md"
     },
     {
       "path": "contributing\\index.html"
@@ -264,8 +279,17 @@
       "path": "index.html"
     },
     {
+      "path": "index.md"
+    },
+    {
       "path": "license",
       "old": true
+    },
+    {
+      "path": "llms.txt"
+    },
+    {
+      "path": "logging.md"
     },
     {
       "path": "logging\\index.html"
@@ -281,6 +305,9 @@
     },
     {
       "path": "resources\\js\\config.js"
+    },
+    {
+      "path": "resources\\js\\instagram.js"
     },
     {
       "path": "resources\\js\\lunr.js"
@@ -313,16 +340,31 @@
       "path": "robots.txt"
     },
     {
+      "path": "scripts\\ad\\computer\\findmachineou.md"
+    },
+    {
       "path": "scripts\\ad\\computer\\findmachineou\\index.html"
+    },
+    {
+      "path": "scripts\\ad\\user\\creation\\ad-copygroups.md"
     },
     {
       "path": "scripts\\ad\\user\\creation\\ad-copygroups\\index.html"
     },
     {
+      "path": "scripts\\ad\\user\\creation\\user-creation-bulk.md"
+    },
+    {
       "path": "scripts\\ad\\user\\creation\\user-creation-bulk\\index.html"
     },
     {
+      "path": "scripts\\ad\\user\\creation\\user-creation.md"
+    },
+    {
       "path": "scripts\\ad\\user\\creation\\user-creation\\index.html"
+    },
+    {
+      "path": "scripts\\ad\\user\\creation\\user-departure.md"
     },
     {
       "path": "scripts\\ad\\user\\creation\\user-departure\\index.html"
@@ -332,43 +374,91 @@
       "old": true
     },
     {
+      "path": "scripts\\ad\\user\\reconcillation\\employee-departure-reconciliation.md"
+    },
+    {
       "path": "scripts\\ad\\user\\reconcillation\\employee-departure-reconciliation\\index.html"
+    },
+    {
+      "path": "scripts\\ad\\user\\reconcillation\\employee-listing.md"
     },
     {
       "path": "scripts\\ad\\user\\reconcillation\\employee-listing\\index.html"
     },
     {
+      "path": "scripts\\e365\\e365-mailbox-converttoshared.md"
+    },
+    {
       "path": "scripts\\e365\\e365-mailbox-converttoshared\\index.html"
+    },
+    {
+      "path": "scripts\\e365\\e365-quarantine-exportrecord.md"
     },
     {
       "path": "scripts\\e365\\e365-quarantine-exportrecord\\index.html"
     },
     {
+      "path": "scripts\\e365\\exchange-quarantinetabl-datadownload.md"
+    },
+    {
       "path": "scripts\\e365\\exchange-quarantinetabl-datadownload\\index.html"
+    },
+    {
+      "path": "scripts\\e365\\newtransportruleexecname.md"
     },
     {
       "path": "scripts\\e365\\newtransportruleexecname\\index.html"
     },
     {
+      "path": "scripts\\e365\\quarantine-to-block.md"
+    },
+    {
+      "path": "scripts\\e365\\quarantine-to-block\\index.html"
+    },
+    {
+      "path": "scripts\\entra\\automatecompromisedaccountremediation.md"
+    },
+    {
       "path": "scripts\\entra\\automatecompromisedaccountremediation\\index.html"
+    },
+    {
+      "path": "scripts\\entra\\entra-userexternal-create.md"
     },
     {
       "path": "scripts\\entra\\entra-userexternal-create\\index.html"
     },
     {
+      "path": "scripts\\entra\\user-management-external.md"
+    },
+    {
       "path": "scripts\\entra\\user-management-external\\index.html"
+    },
+    {
+      "path": "scripts\\general\\module-management\\module-powershell7-require.md"
     },
     {
       "path": "scripts\\general\\module-management\\module-powershell7-require\\index.html"
     },
     {
+      "path": "scripts\\general\\module-management\\update-module.md"
+    },
+    {
       "path": "scripts\\general\\module-management\\update-module\\index.html"
+    },
+    {
+      "path": "scripts\\general\\password-generation\\password-generator-silent.md"
     },
     {
       "path": "scripts\\general\\password-generation\\password-generator-silent\\index.html"
     },
     {
+      "path": "scripts\\general\\password-generation\\password-generator.md"
+    },
+    {
       "path": "scripts\\general\\password-generation\\password-generator\\index.html"
+    },
+    {
+      "path": "scripts\\general\\scriptselector.md"
     },
     {
       "path": "scripts\\general\\scriptselector\\index.html"
@@ -378,10 +468,25 @@
       "old": true
     },
     {
+      "path": "scripts\\intune\\devices\\autopilot-express.md"
+    },
+    {
+      "path": "scripts\\intune\\devices\\autopilot-express\\index.html"
+    },
+    {
+      "path": "scripts\\intune\\devices\\intune-bulksync.md"
+    },
+    {
       "path": "scripts\\intune\\devices\\intune-bulksync\\index.html"
     },
     {
+      "path": "scripts\\intune\\remediation\\m365-version.md"
+    },
+    {
       "path": "scripts\\intune\\remediation\\m365-version\\index.html"
+    },
+    {
+      "path": "scripts\\intune\\remediation\\teams-old.md"
     },
     {
       "path": "scripts\\intune\\remediation\\teams-old\\index.html"
@@ -391,13 +496,25 @@
       "old": true
     },
     {
+      "path": "scripts\\intune\\remediation\\win-storage\\changelog.md"
+    },
+    {
       "path": "scripts\\intune\\remediation\\win-storage\\changelog\\index.html"
+    },
+    {
+      "path": "scripts\\intune\\remediation\\win-storage\\detection.md"
     },
     {
       "path": "scripts\\intune\\remediation\\win-storage\\detection\\index.html"
     },
     {
+      "path": "scripts\\intune\\remediation\\win-storage\\example-logs.md"
+    },
+    {
       "path": "scripts\\intune\\remediation\\win-storage\\example-logs\\index.html"
+    },
+    {
+      "path": "scripts\\intune\\remediation\\win-storage\\functions.md"
     },
     {
       "path": "scripts\\intune\\remediation\\win-storage\\functions\\index.html"
@@ -406,34 +523,71 @@
       "path": "scripts\\intune\\remediation\\win-storage\\index.html"
     },
     {
+      "path": "scripts\\intune\\remediation\\win-storage\\index.md"
+    },
+    {
+      "path": "scripts\\intune\\remediation\\win-storage\\intune-setup.md"
+    },
+    {
       "path": "scripts\\intune\\remediation\\win-storage\\intune-setup\\index.html"
+    },
+    {
+      "path": "scripts\\intune\\remediation\\win-storage\\references.md"
     },
     {
       "path": "scripts\\intune\\remediation\\win-storage\\references\\index.html"
     },
     {
+      "path": "scripts\\intune\\remediation\\win-storage\\remediation-logic.md"
+    },
+    {
       "path": "scripts\\intune\\remediation\\win-storage\\remediation-logic\\index.html"
+    },
+    {
+      "path": "scripts\\intune\\remediation\\win-storage\\remediation.md"
     },
     {
       "path": "scripts\\intune\\remediation\\win-storage\\remediation\\index.html"
     },
     {
+      "path": "scripts\\intune\\remediation\\win-storage\\troubleshooting.md"
+    },
+    {
       "path": "scripts\\intune\\remediation\\win-storage\\troubleshooting\\index.html"
+    },
+    {
+      "path": "scripts\\intune\\remediation\\winupdate-23h2to24h2force.md"
     },
     {
       "path": "scripts\\intune\\remediation\\winupdate-23h2to24h2force\\index.html"
     },
     {
+      "path": "scripts\\intune\\remediation\\winupdate-outstanding.md"
+    },
+    {
       "path": "scripts\\intune\\remediation\\winupdate-outstanding\\index.html"
+    },
+    {
+      "path": "scripts\\intune\\remediation\\winupdate-pause.md"
     },
     {
       "path": "scripts\\intune\\remediation\\winupdate-pause\\index.html"
     },
     {
+      "path": "scripts\\onedrive-sharepoint\\onedrive-sharepont-uploaddownload.md"
+    },
+    {
       "path": "scripts\\onedrive-sharepoint\\onedrive-sharepont-uploaddownload\\index.html"
     },
     {
-      "path": "sitemap.xml.gz"
+      "path": "sitemap.xml"
+    },
+    {
+      "path": "sitemap.xml.gz",
+      "old": true
+    },
+    {
+      "path": "testing.md"
     },
     {
       "path": "testing\\index.html"
